@@ -1,0 +1,28 @@
+{
+  "operations": [
+    {
+      "operation": {
+        "name": "8a322d7125b10806b8843bec034cdb18",
+        "metadata": {
+          "@type": "type.googleapis.com/google.internal.labs.aisandbox.v1.Media",
+          "name": "CAUSJDhmMjFmNWNkLTFlYjUtNGM2NS1hYTI2LTA5Mzc4YzBlMWU0YxokMzBkMzljM2YtZjVlYy00ODEzLTgyZjgtYzE4MTEwNDZhODQwIgNDQUUqJDk3Y2I4NGEyLTA5MjQtNGJiNy1iOGYyLTQ5ZTE2Mzc5OTdlMw",
+          "video": {
+            "seed": 99677,
+            "mediaGenerationId": "CAUSJDhmMjFmNWNkLTFlYjUtNGM2NS1hYTI2LTA5Mzc4YzBlMWU0YxokMzBkMzljM2YtZjVlYy00ODEzLTgyZjgtYzE4MTEwNDZhODQwIgNDQUUqJDk3Y2I4NGEyLTA5MjQtNGJiNy1iOGYyLTQ5ZTE2Mzc5OTdlMw",
+            "prompt": "do something",
+            "fifeUrl": "https://storage.googleapis.com/ai-sandbox-videofx/video/97cb84a2-0924-4bb7-b8f2-49e1637997e3?GoogleAccessId=labs-ai-sandbox-videoserver-prod@system.gserviceaccount.com&Expires=1769255253&Signature=F7GxoVf30CFhOh3AAx2qHzDW16X30UGlwP1dCAH8IRyIInXxmj4Yrc1U8b0fNxmP%2FOxtOA9nfnrV%2FY7%2FL3SKb6DhiuRRe4OECgtiFQse5rc2OiM5ddSIcDVv%2FBuvD2GGg8n7jI2MSPXMGG%2BY32yT%2FzPM9dRJ%2By7b6cbyNkcZM0dSRGQhiivfh16QtUMalrtAlGR0Dfu2FvFOl%2FgyzGMebx2pOyLBBCLRc%2BQB5YH0KTs3FJfjluDTybgNpSazcstmM54DGae4YsD%2FbqoS4jNV6kbTXbmpW%2FRsY84fb8ldCLijdVA3q9UqWPBK2zbW%2BTeyQOK84ub9Wzsn%2F4aVNREOCA%3D%3D",
+            "mediaVisibility": "PRIVATE",
+            "servingBaseUri": "https://storage.googleapis.com/ai-sandbox-videofx/image/97cb84a2-0924-4bb7-b8f2-49e1637997e3?GoogleAccessId=labs-ai-sandbox-videoserver-prod@system.gserviceaccount.com&Expires=1769255253&Signature=q%2Fjg94GfKEOuIv2ha6CbYo%2FoAFufuVnOqXdDET8KQqtNkAmmlmLKf5idk4Ha5V9x4IYebGm%2Fna088niLNX1ozkzAdqnl13qqypiMj5v%2FdYV5wriOzXI7%2FJKVz01oirpSWfPAetUvhDJsVJXucxm6BSI6LUYUBwU%2BfDROYjFtqAHm97vzlCiMIU0q4wVx1dd2I2V5phgG6rnETQWmc5Gww9zuqxkzO2aQhjcuV7hwOsFvbJHwQqXvy8t6xaX5tK0gNnHFCVXVqGDOhIPXw6q1OUT9rVHCTR88fsE8LiNDfaDJJcZQ81toulMVxA2SOdWBlYbjacI1Ap269pTjWye0Gg%3D%3D",
+            "model": "veo_3_1_i2v_s_fast_ultra",
+            "isLooped": false,
+            "aspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE"
+          }
+        }
+      },
+      "sceneId": "65d13179-fe01-45da-8058-e48aa259ee67",
+      "mediaGenerationId": "CAUSJDhmMjFmNWNkLTFlYjUtNGM2NS1hYTI2LTA5Mzc4YzBlMWU0YxokMzBkMzljM2YtZjVlYy00ODEzLTgyZjgtYzE4MTEwNDZhODQwIgNDQUUqJDk3Y2I4NGEyLTA5MjQtNGJiNy1iOGYyLTQ5ZTE2Mzc5OTdlMw",
+      "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+    }
+  ],
+  "remainingCredits": 33130
+}
