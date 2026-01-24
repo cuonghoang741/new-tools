@@ -56,3 +56,48 @@ class AccountManager:
         if 0 <= index < len(self.accounts):
             return self.accounts[index]
         return None
+
+    def check_all_live(self):
+        from app.services.api_service import LabsApiService
+        changed = False
+        
+        for acc in self.accounts:
+            try:
+                # Re-check status
+                api = LabsApiService()
+                cookies = acc.get('cookies')
+                if not cookies: continue
+                
+                # If cookies is list, convert to json str? no, set_credentials handles list
+                api.set_credentials(cookies, acc.get('access_token'))
+                
+                # If missing auth token, try quick fetch (silent)
+                if not api.auth_token:
+                    try: 
+                        t = api.fetch_access_token()
+                        if t: 
+                            acc['access_token'] = t
+                            api.auth_token = t
+                            changed = True
+                    except: pass
+
+                valid, msg = api.check_cookie()
+                
+                new_st = "Live" if valid else "Die"
+                
+                # Extract credit info from msg
+                # Format: "Live (Credits: 500)"
+                if valid and "Credits:" in msg:
+                    try:
+                        credit = msg.split('Credits:')[1].strip().strip(')')
+                        new_st += f" ({credit})"
+                    except: pass
+                
+                if acc.get('status') != new_st:
+                    acc['status'] = new_st
+                    changed = True
+            except Exception as e:
+                print(f"Check failed for {acc.get('name')}: {e}")
+        
+        if changed: self.save_accounts()
+        return changed

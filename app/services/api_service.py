@@ -437,6 +437,219 @@ class LabsApiService:
         response.raise_for_status()
         return response.json()
 
+    def generate_video_text(self, prompt, aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE", count=1, project_id=None, recaptcha_token=None):
+        """Generate video from Text only (Text-to-Video)"""
+        import time
+        import random
+        
+        session_id = f";{int(time.time()*1000)}"
+        current_project_id = project_id if project_id else "7636a948-fa89-4449-a8a5-72c9e008d268"
+
+        # 0. Search Project Scenes (Pre-check)
+        self.search_project_scenes(current_project_id)
+
+        # Generate cache ID
+        cache_id = f"PINHOLE_MAIN_VIDEO_GENERATION"
+        
+        # 1. Log VIDEOFX_CREATE_VIDEO
+        self.submit_batch_log(session_id, "VIDEOFX_CREATE_VIDEO")
+        
+        # 2. Log API latency start
+        timer_id = str(random.randint(100000, 999999))
+        props_timer = [
+            {"key": "TIMER_ID", "stringValue": timer_id},
+            {"key": "TOOL_NAME", "stringValue": "PINHOLE"},
+            {"key": "CURRENT_TIME_MS", "intValue": f"{int(time.time()*1000)}"},
+            {"key": "USER_AGENT", "stringValue": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
+            {"key": "IS_DESKTOP"}
+        ]
+        self.submit_batch_log(session_id, "VIDEO_CREATION_TO_VIDEO_COMPLETION", properties=props_timer)
+
+        url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText"
+        
+        requests_list = []
+        for _ in range(count):
+            seed = random.randint(10000, 99999)
+            
+            # Text-to-Video Models:
+            # veo_3_1_t2v_fast_ultra (Landscape)
+            # veo_3_1_t2v_fast_portrait_ultra (Portrait)
+            
+            model_key = "veo_3_1_t2v_fast_ultra"
+            if aspect_ratio == "VIDEO_ASPECT_RATIO_PORTRAIT":
+                model_key = "veo_3_1_t2v_fast_portrait_ultra"
+
+            req_item = {
+                "aspectRatio": aspect_ratio,
+                "seed": seed,
+                "textInput": {
+                    "prompt": prompt
+                },
+                "videoModelKey": model_key,
+                "metadata": {
+                    "sceneId": self._generate_guid() 
+                }
+            }
+            requests_list.append(req_item)
+            
+        payload = {
+            "clientContext": {
+                "recaptchaContext": {
+                    "token": recaptcha_token,
+                    "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+                },
+                "sessionId": session_id,
+                "projectId": current_project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO"
+            },
+            "requests": requests_list
+        }
+        
+        headers = self._get_headers()
+        headers.update({
+             "sec-ch-ua-platform": "\"Windows\"",
+             "Referer": "https://labs.google/",
+             "Origin": "https://labs.google",
+             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+             "sec-ch-ua": "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Google Chrome\";v=\"144\"",
+             "Content-Type": "text/plain;charset=UTF-8",
+             "x-browser-channel": "stable",
+             "x-browser-copyright": "Copyright 2026 Google LLC. All Rights reserved.",
+             "x-browser-validation": "PHzxKQDW1JU+MpcuUrBanuCqlLI=",
+             "x-browser-year": "2026",
+             "x-client-data": "CIa2yQEIpbbJAQipncoBCNvaygEIk6HLAQiFoM0BCJKkzwEIqqbPAQjaqs8B"
+        })
+        
+        print(f"\n[DEBUG] Calling generate_video_text used ProjectID: {payload['clientContext']['projectId']}")
+        
+        response = self.session.post(url, headers=headers, json=payload)
+        
+        print(f"[DEBUG] Generate Response Status: {response.status_code}")
+        if response.status_code >= 400:
+             print(f"[DEBUG] Generate Error Body: {response.text}")
+             if "reCAPTCHA" in response.text:
+                 raise Exception("Recaptcha error in Text-to-Video")
+
+        response.raise_for_status()
+        return response.json()
+
+        return response.json()
+
+    def fetch_user_history(self):
+        url = "https://labs.google/fx/api/trpc/media.fetchUserHistoryDirectly"
+        # Simplified input param
+        params = {
+            "input": '{"json":{"type":"ASSET_MANAGER","pageSize":18,"responseScope":"RESPONSE_SCOPE_UNSPECIFIED"}}'
+        }
+        
+        headers = self._get_headers()
+        try:
+            self.session.get(url, params=params, headers=headers)
+        except:
+            pass # Ignore history fetch errors
+
+    def prepare_image_generation(self):
+        import time
+        session_id = f";{int(time.time()*1000)}"
+        
+        # 1. Log PINHOLE_GENERATE_IMAGE
+        props = [
+            {"key": "TOOL_NAME", "stringValue": "PINHOLE"},
+            {"key": "G1_PAYGATE_TIER", "stringValue": "PAYGATE_TIER_TWO"},
+            {"key": "PINHOLE_PROMPT_BOX_MODE", "stringValue": "IMAGE_GENERATION"},
+            {"key": "USER_AGENT", "stringValue": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
+            {"key": "IS_DESKTOP"}
+        ]
+        self.submit_batch_log(session_id, "PINHOLE_GENERATE_IMAGE", properties=props)
+        
+        # 2. History
+        self.fetch_user_history()
+        
+        return session_id
+
+    def generate_image_batch(self, prompt, aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE", count=1, project_id=None, recaptcha_token=None, image_media_id=None, session_id=None):
+        """Generate images (Text-to-Image or Image-to-Image)"""
+        import time
+        import random
+        
+        if not session_id:
+            session_id = f";{int(time.time()*1000)}"
+            
+        current_project_id = project_id if project_id else "5a3a7747-a3fd-4faa-a722-68957fd476a7"
+
+        url = f"https://aisandbox-pa.googleapis.com/v1/projects/{current_project_id}/flowMedia:batchGenerateImages"
+        
+        requests_list = []
+        for _ in range(count):
+            seed = random.randint(100000, 999999)
+            
+            req_item = {
+                "clientContext": {
+                    "recaptchaContext": {
+                        "token": recaptcha_token,
+                        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+                    },
+                    "sessionId": session_id,
+                    "projectId": current_project_id,
+                    "tool": "PINHOLE" 
+                },
+                "seed": seed,
+                "imageModelName": "GEM_PIX_2",
+                "imageAspectRatio": aspect_ratio,
+                "prompt": prompt,
+                "imageInputs": []
+            }
+            
+            if image_media_id:
+                req_item["imageInputs"].append({
+                    "name": image_media_id,
+                    "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+                })
+                
+            requests_list.append(req_item)
+            
+        payload = {
+            "clientContext": {
+                "recaptchaContext": {
+                    "token": recaptcha_token,
+                    "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+                },
+                "sessionId": session_id,
+                "projectId": current_project_id,
+                "tool": "PINHOLE"
+            },
+            "requests": requests_list
+        }
+        
+        headers = self._get_headers()
+        headers.update({
+             "sec-ch-ua-platform": "\"Windows\"",
+             "Referer": "https://labs.google/",
+             "Origin": "https://labs.google",
+             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+             "sec-ch-ua": "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Google Chrome\";v=\"144\"",
+             "Content-Type": "text/plain;charset=UTF-8",
+             "x-browser-channel": "stable",
+             "x-browser-copyright": "Copyright 2026 Google LLC. All Rights reserved.",
+             "x-browser-validation": "PHzxKQDW1JU+MpcuUrBanuCqlLI=",
+             "x-browser-year": "2026",
+             "x-client-data": "CIa2yQEIpbbJAQipncoBCNvaygEIk6HLAQiFoM0BCJKkzwEIqqbPAQjaqs8B"
+        })
+        
+        print(f"\n[DEBUG] Calling generate_image_batch used ProjectID: {current_project_id}")
+        
+        response = self.session.post(url, headers=headers, json=payload)
+        
+        print(f"[DEBUG] Image Gen Response Status: {response.status_code}")
+        if response.status_code >= 400:
+             print(f"[DEBUG] Image Gen Error Body: {response.text}")
+             if "reCAPTCHA" in response.text:
+                 raise Exception("Recaptcha error in Image Gen")
+
+        response.raise_for_status()
+        return response.json()
+
     def check_video_status(self, operations):
         """
         Polls status for a list of operations.
