@@ -1,11 +1,9 @@
-
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+﻿
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
 import threading
 import os
-import webbrowser
 from PIL import Image, ImageTk
-from app.ui.rounded_button import RoundedButton
 from app.services.api_service import LabsApiService
 
 class VideoScreen:
@@ -13,106 +11,285 @@ class VideoScreen:
         self.parent = parent
         self.app = app
         self.auto_download_dir = None
+        self.queue_page = 1
+        self.queue_per_page = 20
         self.setup_ui()
 
     def setup_ui(self):
-        # Top toolbar
-        toolbar = tk.Frame(self.parent, bg="#ecf0f1", pady=10)
-        toolbar.pack(fill="x")
+        # Header
+        header = ctk.CTkFrame(self.parent, fg_color="transparent", height=60)
+        header.pack(fill="x", pady=(0, 15))
+        header.pack_propagate(False)
         
-        RoundedButton(toolbar, text="📂 Import Excel", command=self.import_excel, width=130, height=35, bg_color="#ecf0f1", fg_color="#e67e22", hover_color="#d35400").pack(side="left", padx=15)
-        RoundedButton(toolbar, text="📥 Tải Template", command=self.download_template, width=120, height=35, bg_color="#ecf0f1", fg_color="#3498db", hover_color="#2980b9").pack(side="left", padx=5)
+        ctk.CTkLabel(
+            header, 
+            text="Tạo Video (Batch)", 
+            font=("SF Pro Display", 22, "bold"),
+            text_color="#ffffff"
+        ).pack(side="left")
         
-        self.btn_start = RoundedButton(toolbar, text="▶ START", command=self.start_batch, width=100, height=35, bg_color="#ecf0f1", fg_color="#27ae60", hover_color="#1e8449")
+        self.lbl_status = ctk.CTkLabel(
+            header, 
+            text="Chờ import Excel...", 
+            font=("SF Pro Display", 12),
+            text_color="#6c7293"
+        )
+        self.lbl_status.pack(side="right", padx=10)
+        
+        # Toolbar
+        toolbar = ctk.CTkFrame(self.parent, fg_color="#1a1a2e", corner_radius=12, height=65)
+        toolbar.pack(fill="x", pady=(0, 15))
+        toolbar.pack_propagate(False)
+        
+        toolbar_inner = ctk.CTkFrame(toolbar, fg_color="transparent")
+        toolbar_inner.pack(fill="x", padx=15, pady=12)
+        
+        # Left buttons
+        left_btns = ctk.CTkFrame(toolbar_inner, fg_color="transparent")
+        left_btns.pack(side="left")
+        
+        ctk.CTkButton(
+            left_btns,
+            text="📂 Import",
+            font=("SF Pro Display", 12, "bold"),
+            width=100,
+            height=38,
+            corner_radius=10,
+            fg_color="#f97316",
+            hover_color="#ea580c",
+            command=self.import_excel
+        ).pack(side="left", padx=5)
+        
+        self.btn_start = ctk.CTkButton(
+            left_btns,
+            text="▶ START",
+            font=("SF Pro Display", 12, "bold"),
+            width=100,
+            height=38,
+            corner_radius=10,
+            fg_color="#22c55e",
+            hover_color="#16a34a",
+            command=self.start_batch
+        )
         self.btn_start.pack(side="left", padx=5)
         
-        self.btn_stop = RoundedButton(toolbar, text="⏹ STOP", command=self.stop_batch, width=100, height=35, bg_color="#ecf0f1", fg_color="#e74c3c", hover_color="#c0392b")
+        self.btn_stop = ctk.CTkButton(
+            left_btns,
+            text="⏹️ STOP",
+            font=("SF Pro Display", 12, "bold"),
+            width=100,
+            height=38,
+            corner_radius=10,
+            fg_color="#ef4444",
+            hover_color="#dc2626",
+            command=self.stop_batch
+        )
         self.btn_stop.pack(side="left", padx=5)
         
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=15, pady=5)
+        # Right options
+        right_opts = ctk.CTkFrame(toolbar_inner, fg_color="transparent")
+        right_opts.pack(side="right")
         
-        tk.Label(toolbar, text="Tỷ lệ:", bg="#ecf0f1", font=("Segoe UI", 9)).pack(side="left")
-        self.combo_ratio = ttk.Combobox(toolbar, values=["Landscape (16:9)", "Portrait (9:16)"], state="readonly", width=14, font=("Segoe UI", 9))
+        # Template button on right side
+        ctk.CTkButton(
+            right_opts,
+            text="📥 Template",
+            font=("SF Pro Display", 11),
+            width=105,
+            height=32,
+            corner_radius=8,
+            fg_color="#374151",
+            hover_color="#4b5563",
+            command=self.download_template
+        ).pack(side="right", padx=(15, 0))
+
+        # ctk.CTkButton(
+        #     right_opts,
+        #     text="🧪 Mock",
+        #     font=("SF Pro Display", 11),
+        #     width=60,
+        #     height=32,
+        #     corner_radius=8,
+        #     fg_color="#374151",
+        #     hover_color="#4b5563",
+        #     command=self.add_mock_data
+        # ).pack(side="right", padx=(15, 0))
+        
+        ctk.CTkLabel(
+            right_opts, 
+            text="Tỷ lệ:", 
+            font=("SF Pro Display", 11),
+            text_color="#a0a3bd"
+        ).pack(side="left", padx=(0, 5))
+        
+        self.combo_ratio = ctk.CTkOptionMenu(
+            right_opts,
+            values=["Landscape (16:9)", "Portrait (9:16)"],
+            font=("SF Pro Display", 11),
+            width=140,
+            height=32,
+            corner_radius=8,
+            fg_color="#16213e",
+            button_color="#6366f1",
+            button_hover_color="#5855eb"
+        )
         self.combo_ratio.set("Landscape (16:9)")
-        self.combo_ratio.pack(side="left", padx=(5, 15))
+        self.combo_ratio.pack(side="left", padx=5)
         
-        tk.Label(toolbar, text="Bản sao:", bg="#ecf0f1", font=("Segoe UI", 9)).pack(side="left")
-        self.spin_count = tk.Spinbox(toolbar, from_=1, to=4, width=3, font=("Segoe UI", 9))
+        ctk.CTkLabel(
+            right_opts, 
+            text="Copies:", 
+            font=("SF Pro Display", 11),
+            text_color="#a0a3bd"
+        ).pack(side="left", padx=(15, 5))
+        
+        self.spin_count = ctk.CTkOptionMenu(
+            right_opts,
+            values=["1", "2", "3", "4"],
+            font=("SF Pro Display", 11),
+            width=60,
+            height=32,
+            corner_radius=8,
+            fg_color="#16213e",
+            button_color="#6366f1"
+        )
+        self.spin_count.set("1")
         self.spin_count.pack(side="left", padx=5)
         
-        tk.Label(toolbar, text="Start Short:", bg="#ecf0f1", font=("Segoe UI", 9)).pack(side="left")
-        self.spin_start_index = tk.Spinbox(toolbar, from_=1, to=1000, width=5, font=("Segoe UI", 9))
-        self.spin_start_index.delete(0, "end")
-        self.spin_start_index.insert(0, "1")
-        self.spin_start_index.pack(side="left", padx=5)
+        self.var_auto_download = ctk.BooleanVar(value=False)
+        self.chk_auto = ctk.CTkCheckBox(
+            right_opts,
+            text="Auto Download",
+            font=("SF Pro Display", 11),
+            text_color="#a0a3bd",
+            variable=self.var_auto_download,
+            command=self.on_auto_download_toggle,
+            checkbox_width=20,
+            checkbox_height=20,
+            corner_radius=5,
+            fg_color="#6366f1",
+            hover_color="#5855eb"
+        )
+        self.chk_auto.pack(side="left", padx=15)
         
-        self.var_auto_download = tk.BooleanVar(value=False)
-        def on_auto_download_toggle():
-            if self.var_auto_download.get():
-                folder = filedialog.askdirectory(title="Chọn thư mục lưu Auto Download")
-                if folder:
-                    self.auto_download_dir = folder
-                    messagebox.showinfo("Info", f"Đã chọn thư mục lưu:\n{folder}")
-                else:
-                    self.var_auto_download.set(False)
+        # Content: Split View
+        content = ctk.CTkFrame(self.parent, fg_color="transparent")
+        content.pack(fill="both", expand=True)
+        
+        # LEFT: Queue Panel
+        left_panel = ctk.CTkFrame(content, fg_color="#1a1a2e", corner_radius=16, width=380)
+        left_panel.pack(side="left", fill="y", padx=(0, 10))
+        left_panel.pack_propagate(False)
+        
+        # Queue Header
+        queue_header = ctk.CTkFrame(left_panel, fg_color="transparent", height=50)
+        queue_header.pack(fill="x", padx=15, pady=(15, 10))
+        queue_header.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            queue_header, 
+            text="📋 Queue", 
+            font=("SF Pro Display", 15, "bold"),
+            text_color="#ffffff"
+        ).pack(side="left")
+        
+        self.queue_count_label = ctk.CTkLabel(
+            queue_header, 
+            text="0 jobs", 
+            font=("SF Pro Display", 11),
+            text_color="#6c7293"
+        )
+        self.queue_count_label.pack(side="right")
+        
+        ctk.CTkButton(
+            queue_header,
+            text="🗑️ Clear",
+            font=("SF Pro Display", 10),
+            width=60,
+            height=24,
+            corner_radius=6,
+            fg_color="#374151",
+            hover_color="#4b5563",
+            command=self.clear_queue
+        ).pack(side="right", padx=(0, 10))
+        
+        # Tip
+        tip = ctk.CTkLabel(
+            left_panel, 
+            text="💡 Đặt ảnh cùng folder với Excel để chỉ nhập tên file", 
+            font=("SF Pro Display", 10),
+            text_color="#6c7293",
+            wraplength=340
+        )
+        tip.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Queue List
+        self.queue_scroll = ctk.CTkScrollableFrame(
+            left_panel, 
+            fg_color="transparent",
+            scrollbar_button_color="#3a3a5e"
+        )
+        self.queue_scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        # Pagination Controls
+        pag_frame = ctk.CTkFrame(left_panel, fg_color="transparent", height=30)
+        pag_frame.pack(fill="x", padx=10, pady=(0, 15))
+        
+        self.btn_prev = ctk.CTkButton(pag_frame, text="<", width=30, height=24, fg_color="#374151", command=self.prev_page, state="disabled")
+        self.btn_prev.pack(side="left")
+        
+        self.lbl_page = ctk.CTkLabel(pag_frame, text="Page 1", font=("SF Pro Display", 11), text_color="#6c7293")
+        self.lbl_page.pack(side="left", expand=True)
+        
+        self.btn_next = ctk.CTkButton(pag_frame, text=">", width=30, height=24, fg_color="#374151", command=self.next_page, state="disabled")
+        self.btn_next.pack(side="right")
+        
+        # RIGHT: Gallery Panel
+        right_panel = ctk.CTkFrame(content, fg_color="#1a1a2e", corner_radius=16)
+        right_panel.pack(side="left", fill="both", expand=True)
+        
+        # Gallery Header
+        gallery_header = ctk.CTkFrame(right_panel, fg_color="transparent", height=50)
+        gallery_header.pack(fill="x", padx=15, pady=(15, 10))
+        gallery_header.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            gallery_header, 
+            text="⚡ Gallery", 
+            font=("SF Pro Display", 15, "bold"),
+            text_color="#ffffff"
+        ).pack(side="left")
+        
+        ctk.CTkButton(
+            gallery_header,
+            text="📥 Tải tất cả",
+            font=("SF Pro Display", 11),
+            width=100,
+            height=32,
+            corner_radius=8,
+            fg_color="#3b82f6",
+            hover_color="#2563eb",
+            command=self.download_all_videos
+        ).pack(side="right")
+        
+        # Gallery Grid
+        self.gallery_scroll = ctk.CTkScrollableFrame(
+            right_panel, 
+            fg_color="transparent",
+            scrollbar_button_color="#3a3a5e"
+        )
+        self.gallery_scroll.pack(fill="both", expand=True, padx=10, pady=(0, 15))
+
+    def on_auto_download_toggle(self):
+        if self.var_auto_download.get():
+            folder = filedialog.askdirectory(title="Chọn thư mục lưu Auto Download")
+            if folder:
+                self.auto_download_dir = folder
+                messagebox.showinfo("Info", f"Đã chọn thư mục:\n{folder}")
             else:
-                self.auto_download_dir = None
-
-        tk.Checkbutton(toolbar, text="Auto Download", variable=self.var_auto_download, command=on_auto_download_toggle, bg="#ecf0f1", font=("Segoe UI", 9)).pack(side="left", padx=10)
-        
-        self.lbl_status = tk.Label(toolbar, text="Chờ import Excel...", bg="#ecf0f1", font=("Segoe UI", 10), fg="#7f8c8d")
-        self.lbl_status.pack(side="right", padx=20)
-        
-        # Content Split View
-        paned = tk.PanedWindow(self.parent, orient=tk.HORIZONTAL, bg="#cfd8dc", sashwidth=4)
-        paned.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # LEFT PANEL - Queue
-        left_panel = tk.LabelFrame(paned, text="📋 Queue", font=("Segoe UI", 10, "bold"), bg="white", fg="#2c3e50", padx=5, pady=5)
-        
-        tk.Label(left_panel, text=r"💡 Để file template cùng folder với ảnh thì chỉ việc nhập tên ảnh, để khác thì cần nhập đường dẫn đầy đủ vd: C:/Users/admin/Desktop/1.png", bg="#fff3cd", fg="#856404", font=("Segoe UI", 8), wraplength=280).pack(fill="x", pady=(0, 5))
-        
-        queue_container = tk.Frame(left_panel, bg="white")
-        queue_container.pack(fill="both", expand=True)
-        
-        self.queue_canvas = tk.Canvas(queue_container, bg="white", highlightthickness=0)
-        self.queue_scrollbar = ttk.Scrollbar(queue_container, orient="vertical", command=self.queue_canvas.yview)
-        self.queue_list_frame = tk.Frame(self.queue_canvas, bg="white")
-        
-        self.queue_list_frame.bind("<Configure>", lambda e: self.queue_canvas.configure(scrollregion=self.queue_canvas.bbox("all")))
-        self.queue_canvas.create_window((0, 0), window=self.queue_list_frame, anchor="nw", width=320)
-        
-        self.queue_canvas.configure(yscrollcommand=self.queue_scrollbar.set)
-        self.queue_canvas.pack(side="left", fill="both", expand=True)
-        self.queue_scrollbar.pack(side="right", fill="y")
-        
-        # RIGHT PANEL - Gallery
-        right_panel = tk.LabelFrame(paned, text="⚡ Gallery", font=("Segoe UI", 10, "bold"), bg="white", fg="#2c3e50", padx=5, pady=5)
-        
-        progress_container = tk.Frame(right_panel, bg="white")
-        progress_container.pack(fill="both", expand=True)
-        
-        self.progress_canvas = tk.Canvas(progress_container, bg="white", highlightthickness=0)
-        self.progress_scrollbar = ttk.Scrollbar(progress_container, orient="vertical", command=self.progress_canvas.yview)
-        self.progress_list_frame = tk.Frame(self.progress_canvas, bg="white")
-        
-        self.progress_list_frame.bind("<Configure>", lambda e: self.progress_canvas.configure(scrollregion=self.progress_canvas.bbox("all")))
-        self.progress_canvas.create_window((0, 0), window=self.progress_list_frame, anchor="nw")
-        
-        self.progress_canvas.configure(yscrollcommand=self.progress_scrollbar.set)
-        self.progress_canvas.pack(side="left", fill="both", expand=True)
-        self.progress_scrollbar.pack(side="right", fill="y")
-        
-        btn_download_all = tk.Frame(right_panel, bg="white")
-        btn_download_all.pack(fill="x", pady=(10, 0))
-        RoundedButton(btn_download_all, text="📥 Tải tất cả Video", command=self.download_all_videos, width=150, height=35, bg_color="white", fg_color="#3498db", hover_color="#2980b9").pack(side="right")
-
-        paned.add(left_panel, width=350)
-        paned.add(right_panel, stretch="always")
-
-        def _on_mousewheel(event):
-            self.queue_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        self.queue_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+                self.var_auto_download.set(False)
+        else:
+            self.auto_download_dir = None
 
     def download_template(self):
         import pandas as pd
@@ -121,10 +298,22 @@ class VideoScreen:
         try:
             data = {"image": ["dog.jpg", "cat.png"], "prompt": ["cute dog", "cat playing"]}
             pd.DataFrame(data).to_excel(save_path, index=False)
-            messagebox.showinfo("Success", f"Đã tạo template:\n{save_path}")
+            messagebox.showinfo("Success", f"✅ Đã tạo template:\n{save_path}")
             os.startfile(os.path.dirname(save_path))
         except Exception as e:
             messagebox.showerror("Error", f"Lỗi: {e}")
+
+    def clear_queue(self):
+        if not self.app.job_queue: return
+        if self.app.is_running:
+            messagebox.showwarning("Warning", "Đang chạy batch! Hãy STOP trước.")
+            return
+            
+        if messagebox.askyesno("Xác nhận", "Xóa toàn bộ queue?"):
+            self.app.job_queue = []
+            self.refresh_queue_preview()
+            self.refresh_progress_panel()
+            self.lbl_status.configure(text="🗑️ Đã xóa queue")
 
     def import_excel(self):
         filepath = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx *.xls")])
@@ -142,64 +331,159 @@ class VideoScreen:
             
             for idx, row in df.iterrows():
                 image_path = None
+                image_name = None
                 if has_image_col:
                     val = str(row['image']).strip()
                     if val and val.lower() not in ('nan', 'none', ''):
                         image_path = val if os.path.isabs(val) else os.path.join(base_dir, val)
                         if not os.path.exists(image_path): image_path = None
+                        else: image_name = os.path.splitext(os.path.basename(image_path))[0]
                 
                 prompt = str(row['prompt']).strip()
                 self.app.job_queue.append({
                     'index': len(self.app.job_queue),
                     'image': image_path,
+                    'image_name': image_name,
                     'prompt': prompt,
                     'status': 'pending',
                     'progress': 0
                 })
                 
             self.refresh_queue_preview()
-            self.lbl_status.config(text=f"Đã import {len(self.app.job_queue)} jobs")
+            self.lbl_status.configure(text=f"✅ Đã import {len(self.app.job_queue)} jobs")
         except Exception as e:
             messagebox.showerror("Error", f"Lỗi Import: {e}")
 
     def refresh_queue_preview(self):
-        for w in self.queue_list_frame.winfo_children(): w.destroy()
+        for w in self.queue_scroll.winfo_children(): w.destroy()
         self.app.thumbnail_cache = {}
         
-        for idx, job in enumerate(self.app.job_queue):
-            content = tk.Frame(self.queue_list_frame, bg="white", pady=5)
-            content.pack(fill="x", padx=5)
+        total_jobs = len(self.app.job_queue)
+        self.queue_count_label.configure(text=f"{total_jobs} jobs")
+        
+        # Pagination Logic
+        total_pages = (total_jobs + self.queue_per_page - 1) // self.queue_per_page
+        if total_pages < 1: total_pages = 1
+        if self.queue_page > total_pages: self.queue_page = total_pages
+        if self.queue_page < 1: self.queue_page = 1
+        
+        start = (self.queue_page - 1) * self.queue_per_page
+        end = start + self.queue_per_page
+        page_items = self.app.job_queue[start:end]
+        
+        # Update Controls
+        self.lbl_page.configure(text=f"Page {self.queue_page}/{total_pages}")
+        self.btn_prev.configure(state="normal" if self.queue_page > 1 else "disabled")
+        self.btn_next.configure(state="normal" if self.queue_page < total_pages else "disabled")
+        
+        for idx, job in enumerate(page_items):
+            # Pass absolute index to create_queue_item if needed, or just job object
+            self.create_queue_item(job['index'], job)
+
+    def prev_page(self):
+        if self.queue_page > 1:
+            self.queue_page -= 1
+            self.refresh_queue_preview()
+
+    def next_page(self):
+        # Calculate max page
+        total_jobs = len(self.app.job_queue)
+        total_pages = (total_jobs + self.queue_per_page - 1) // self.queue_per_page
+        if self.queue_page < total_pages:
+            self.queue_page += 1
+            self.refresh_queue_preview()
+
+    def create_queue_item(self, idx, job):
+        item = ctk.CTkFrame(self.queue_scroll, fg_color="#16213e", corner_radius=12, height=70)
+        item.pack(fill="x", pady=4)
+        item.pack_propagate(False)
+        
+        inner = ctk.CTkFrame(item, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=12, pady=10)
+        
+        # Thumbnail
+        thumb_frame = ctk.CTkFrame(inner, width=50, height=50, fg_color="#2a2a4e", corner_radius=8)
+        thumb_frame.pack(side="left")
+        thumb_frame.pack_propagate(False)
+        
+        if job['image']:
+            try:
+                img = Image.open(job['image'])
+                img.thumbnail((48, 48))
+                photo = ctk.CTkImage(light_image=img, dark_image=img, size=(48, 48))
+                self.app.thumbnail_cache[idx] = photo
+                ctk.CTkLabel(thumb_frame, image=photo, text="").pack(expand=True)
+            except:
+                ctk.CTkLabel(thumb_frame, text="Img", font=("SF Pro Display", 11, "bold"), text_color="#6c7293").pack(expand=True)
+        else:
+            ctk.CTkLabel(thumb_frame, text="Txt", font=("SF Pro Display", 11, "bold"), text_color="#6366f1").pack(expand=True)
+        
+        # Info
+        info = ctk.CTkFrame(inner, fg_color="transparent")
+        info.pack(side="left", fill="both", expand=True, padx=10)
+        
+        job_type = "Img→Vid" if job['image'] else "Text→Vid"
+        ctk.CTkLabel(
+            info, 
+            text=f"#{idx+1} {job_type}", 
+            font=("SF Pro Display", 12, "bold"),
+            text_color="#ffffff",
+            anchor="w"
+        ).pack(fill="x")
+        
+        ctk.CTkLabel(
+            info, 
+            text=job['prompt'][:30] + ("..." if len(job['prompt']) > 30 else ""), 
+            font=("SF Pro Display", 10),
+            text_color="#6c7293",
+            anchor="w"
+        ).pack(fill="x")
+        
+        # Status + Delete
+        st = job['status']
+        status_config = {
+            'pending': ('⏳', '#f59e0b'),
+            'processing': ('⚙️', '#3b82f6'),
+            'polling': ('👁️', '#8b5cf6'),
+            'success': ('✅', '#22c55e'),
+            'failed': ('⛔', '#ef4444')
+        }
+        icon, color = status_config.get(st, ('○', '#6c7293'))
+        
+        right_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        right_frame.pack(side="right")
+        
+        ctk.CTkLabel(
+            right_frame, 
+            text=icon, 
+            font=("SF Pro Display", 16, "bold"),
+            text_color=color
+        ).pack(side="left", padx=0)
+        
+        # Delete button for pending/failed
+        if st in ('pending', 'failed'):
+            def remove_job(i=idx):
+                if self.app.is_running and self.app.job_queue[i]['status'] == 'processing':
+                    messagebox.showwarning("Warning", "Không thể xóa job đang chạy!")
+                    return
+                self.app.job_queue.pop(i)
+                for k, j in enumerate(self.app.job_queue): j['index'] = k
+                self.refresh_queue_preview()
+                self.refresh_progress_panel()
             
-            # Thumbnail Frame
-            thumb_frame = tk.Frame(content, bg="#f5f5f5", width=60, height=45)
-            thumb_frame.pack(side="left", padx=5)
-            thumb_frame.pack_propagate(False)
-            
-            if job['image']:
-                try:
-                    img = Image.open(job['image'])
-                    img.thumbnail((58, 43))
-                    photo = ImageTk.PhotoImage(img)
-                    self.app.thumbnail_cache[idx] = photo
-                    tk.Label(thumb_frame, image=photo, bg="#f5f5f5").pack(expand=True)
-                except:
-                    tk.Label(thumb_frame, text="🖼", font=("Segoe UI", 14), bg="#f5f5f5", fg="#7f8c8d").pack(expand=True)
-            else:
-                tk.Label(thumb_frame, text="📝", font=("Segoe UI", 16), bg="#f5f5f5", fg="#3498db").pack(expand=True)
-            
-            info = tk.Frame(content, bg="white")
-            info.pack(side="left", fill="both", expand=True)
-            job_type = "Img2Vid" if job['image'] else "Txt2Vid"
-            tk.Label(info, text=f"#{idx+1} {job_type}", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w")
-            tk.Label(info, text=job['prompt'][:25]+"...", font=("Segoe UI", 8), fg="#7f8c8d", bg="white").pack(anchor="w")
-            
-            st = job['status']
-            status_map = {'pending': '⏳', 'processing': '⚙️', 'polling': '👀', 'success': '✅', 'failed': '❌'}
-            colors = {'pending': '#f39c12', 'processing': '#3498db', 'polling': '#9b59b6', 'success': '#27ae60', 'failed': '#e74c3c'}
-            
-            tk.Label(content, text=status_map.get(st, st), fg=colors.get(st, 'black'), bg="white", font=("Segoe UI", 12)).pack(side="right", padx=5)
-            
-            ttk.Separator(self.queue_list_frame, orient="horizontal").pack(fill="x", padx=5)
+            del_btn = ctk.CTkButton(
+                right_frame,
+                text="✕",
+                width=28,
+                height=28,
+                corner_radius=6,
+                fg_color="transparent",
+                hover_color="#ef4444",
+                text_color="#6c7293",
+                font=("SF Pro Display", 14, "bold"),
+                command=remove_job
+            )
+            del_btn.pack(side="left", padx=0)
 
     def start_batch(self):
         if not self.app.job_queue: return
@@ -214,19 +498,20 @@ class VideoScreen:
             
         self.app.is_running = True
         
-        # Use safe merge instead of reset to avoid conflict with Image Tab if running
         with self.app.lock:
             if not isinstance(self.app.running_jobs, dict): self.app.running_jobs = {}
             for acc in live_accounts:
                 if acc['name'] not in self.app.running_jobs:
                     self.app.running_jobs[acc['name']] = []
         
-        self.lbl_status.config(text=f"Đang chạy... ({len(live_accounts)} accounts)")
+        self.lbl_status.configure(text=f"🚀 Đang chạy... ({len(live_accounts)} accounts)")
+        self.btn_start.configure(state="disabled", fg_color="#4a4a6a")
         threading.Thread(target=self.batch_worker, daemon=True).start()
 
     def stop_batch(self):
         self.app.is_running = False
-        self.lbl_status.config(text="Đã dừng")
+        self.lbl_status.configure(text="⏹️ Đã dừng")
+        self.btn_start.configure(state="normal", fg_color="#22c55e")
 
     def batch_worker(self):
         import time
@@ -236,7 +521,12 @@ class VideoScreen:
             pending = [j for j in self.app.job_queue if j['status'] == 'pending']
             if not pending:
                 if not [j for j in self.app.job_queue if j['status'] in ('processing', 'polling')]:
-                    self.app.root.after(0, lambda: self.lbl_status.config(text="Hoàn tất!"))
+                    self.app.browser_service.close_all_sessions()
+                    self.app.is_running = False
+                    self.app.root.after(0, lambda: [
+                        self.lbl_status.configure(text="✅ Hoàn tất!"),
+                        self.btn_start.configure(state="normal", fg_color="#22c55e")
+                    ])
                     break
                 time.sleep(1)
                 continue
@@ -256,6 +546,7 @@ class VideoScreen:
                         self.app.root.after(0, self.refresh_queue_preview)
                         self.app.root.after(0, self.refresh_progress_panel)
                         threading.Thread(target=self.process_job, args=(job, acc), daemon=True).start()
+                        time.sleep(0.5)
             time.sleep(1)
 
     def process_job(self, job, account):
@@ -263,6 +554,7 @@ class VideoScreen:
         try:
             api = LabsApiService()
             api.set_credentials(account['cookies'], account.get('access_token'))
+            if not self.app.is_running: return
             
             media_id = None
             if job['image']:
@@ -270,7 +562,8 @@ class VideoScreen:
                 media_id = res.get('mediaId')
                 if not media_id: raise Exception("Upload failed")
             
-            token = self.app.browser_service.fetch_recaptcha_token(account['cookies'], use_visible_browser=True)
+            token = self.app.browser_service.fetch_recaptcha_token(account['cookies'], account_id=account['name'], use_visible_browser=True)
+            if not self.app.is_running: return
             if not token: raise Exception("Failed Recaptcha")
             
             project_id = account.get('project_id')
@@ -315,11 +608,8 @@ class VideoScreen:
                         
                         if self.var_auto_download.get() and self.auto_download_dir:
                             try:
-                                start_idx = 1
-                                try: start_idx = int(self.spin_start_index.get())
-                                except: pass
-                                f_idx = start_idx + job['index']
-                                path = os.path.join(self.auto_download_dir, f"video_{f_idx}.mp4")
+                                name = f"short_{job['image_name']}.mp4" if job.get('image_name') else f"video_{job['index']}.mp4"
+                                path = os.path.join(self.auto_download_dir, name)
                                 threading.Thread(target=lambda: api.download_video(url, path), daemon=True).start()
                             except: pass
                         break
@@ -335,78 +625,331 @@ class VideoScreen:
             self.app.root.after(0, self.refresh_progress_panel)
 
     def refresh_progress_panel(self):
-        for w in self.progress_list_frame.winfo_children(): w.destroy()
+        for w in self.gallery_scroll.winfo_children(): w.destroy()
         
-        # Grid layout for active jobs
         active = [j for j in self.app.job_queue if j['status'] in ('processing', 'polling', 'success', 'failed')]
+        
+        # Create grid
         cols = 3
+        row_frame = None
         
         for idx, job in enumerate(active):
-            r = idx // cols
-            c = idx % cols
-            self.create_progress_card(job, r, c)
+            if idx % cols == 0:
+                row_frame = ctk.CTkFrame(self.gallery_scroll, fg_color="transparent")
+                row_frame.pack(fill="x", pady=5)
+            
+            self.create_progress_card(job, row_frame)
 
-    def create_progress_card(self, job, r, c):
-        # Minimal Card Grid
-        card = tk.Frame(self.progress_list_frame, bg="white", bd=1, relief="solid", width=200, height=180, cursor="hand2")
-        card.grid(row=r, column=c, padx=8, pady=8)
+    def create_progress_card(self, job, parent):
+        card = ctk.CTkFrame(parent, width=200, height=180, fg_color="#16213e", corner_radius=14)
+        card.pack(side="left", padx=6, pady=4)
         card.pack_propagate(False)
         
         # Header
-        header = tk.Frame(card, bg="white", height=25)
-        header.pack(fill="x", padx=5, pady=2)
+        header = ctk.CTkFrame(card, fg_color="transparent", height=35)
+        header.pack(fill="x", padx=12, pady=(10, 5))
         header.pack_propagate(False)
         
-        tk.Label(header, text=f"#{job['index']+1}", font=("Segoe UI", 9, "bold"), fg="#7f8c8d", bg="white").pack(side="left")
+        ctk.CTkLabel(
+            header, 
+            text=f"#{job['index']+1}", 
+            font=("SF Pro Display", 11, "bold"),
+            text_color="#6c7293"
+        ).pack(side="left")
         
         st = job['status']
-        status_map = {'processing': '⚙️', 'polling': '👀', 'success': '✅', 'failed': '❌'}
-        color_map = {'processing': '#3498db', 'polling': '#9b59b6', 'success': '#27ae60', 'failed': '#e74c3c'}
+        status_config = {
+            'processing': ('⚙️', '#3b82f6'),
+            'polling': ('👁️', '#8b5cf6'),
+            'success': ('✅', '#22c55e'),
+            'failed': ('⛔', '#ef4444')
+        }
+        icon, color = status_config.get(st, ('⏳', '#6c7293'))
         
-        tk.Label(header, text=status_map.get(st, st), fg=color_map.get(st, 'black'), bg="white", font=("Segoe UI", 12)).pack(side="right")
+        ctk.CTkLabel(
+            header, 
+            text=icon, 
+            font=("SF Pro Display", 14, "bold"),
+            text_color=color
+        ).pack(side="right")
         
         # Content
-        content = tk.Frame(card, bg="#f5f5f5")
-        content.pack(fill="both", expand=True, padx=5, pady=5)
+        content = ctk.CTkFrame(card, fg_color="#2a2a4e", corner_radius=10)
+        content.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         
-        def on_click(e):
-            if job.get('video_url'):
-                webbrowser.open(job['video_url'])
-        
-        card.bind("<Button-1>", on_click)
-        content.bind("<Button-1>", on_click)
+        def retry():
+            # Find a live account to retry with
+            live_accounts = [a for a in self.app.account_manager.accounts if "Live" in a.get('status', '')]
+            if not live_accounts:
+                from tkinter import messagebox
+                messagebox.showerror("Error", "Không có tài khoản Live!")
+                return
+            
+            acc = live_accounts[0]
+            job['status'] = 'processing'
+            job['error'] = None
+            job['account'] = acc['name']
+            job['progress'] = 0
+            self.refresh_queue_preview()
+            self.refresh_progress_panel()
+            
+            # Run immediately in background
+            import threading
+            threading.Thread(target=self.process_job, args=(job, acc), daemon=True).start()
         
         if st in ('processing', 'polling'):
             prog = job.get('progress', 0)
-            tk.Label(content, text=f"{int(prog)}%", font=("Segoe UI", 14, "bold"), bg="#f5f5f5", fg="#3498db").pack(expand=True)
-            pb = tk.Frame(content, bg="#e0e0e0", height=4)
-            pb.pack(fill="x", padx=10, pady=10)
-            tk.Frame(pb, bg="#3498db", width=0).place(relx=0, rely=0, relwidth=prog/100, relheight=1)
-        
+            ctk.CTkLabel(
+                content, 
+                text=f"{int(prog)}%", 
+                font=("SF Pro Display", 24, "bold"),
+                text_color="#6366f1"
+            ).pack(expand=True)
+            
+            progress_bar = ctk.CTkProgressBar(content, width=160, height=6, corner_radius=3, fg_color="#1a1a2e", progress_color="#6366f1")
+            progress_bar.set(prog/100)
+            progress_bar.pack(pady=(0, 15))
+            
         elif st == 'success' and job.get('video_url'):
-            tk.Label(content, text="▶ VIDEO", font=("Segoe UI", 12, "bold"), bg="#f5f5f5", fg="#2c3e50").pack(expand=True)
-            tk.Label(content, text="(Click to Open)", font=("Segoe UI", 8), bg="#f5f5f5", fg="gray").pack()
+            # Thumbnail container
+            thumb_frame = ctk.CTkFrame(content, fg_color="transparent", width=160, height=90)
+            thumb_frame.pack(expand=True, pady=5)
+            thumb_frame.pack_propagate(False)
+
+            if 'thumb_video_ctk' not in job:
+                ctk.CTkLabel(thumb_frame, text="Loading thumb...", font=("SF Pro Display", 11), text_color="#6c7293").place(relx=0.5, rely=0.5, anchor="center")
+                
+                def load_thumb():
+                    try:
+                        import cv2
+                        cap = cv2.VideoCapture(job['video_url'])
+                        ret, frame = cap.read()
+                        cap.release()
+                        if ret:
+                            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            pil_img = Image.fromarray(frame)
+                            pil_img.thumbnail((160, 90))
+                            ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=pil_img.size)
+                            job['thumb_video_ctk'] = ctk_img
+                            self.app.root.after(0, self.refresh_progress_panel)
+                    except Exception as e:
+                        print(f"Thumb error: {e}")
+
+                threading.Thread(target=load_thumb, daemon=True).start()
+            else:
+                # Show thumbnail and Play overlay
+                thumb_lbl = ctk.CTkLabel(thumb_frame, image=job['thumb_video_ctk'], text="")
+                thumb_lbl.place(relx=0.5, rely=0.5, anchor="center")
+                
+                # Overlay Play Button
+                # Overlay Play Button
+                # Overlay Play Label (Cleaner than Button)
+                play_lbl = ctk.CTkLabel(
+                    thumb_frame,
+                    text="▶",
+                    width=40,
+                    height=40,
+                    fg_color="transparent",
+                    text_color="#ffffff",
+                    font=("SF Pro Display", 24),
+                    cursor="hand2"
+                )
+                play_lbl.place(relx=0.5, rely=0.5, anchor="center")
+                
+                # Bind click events to both label and surrounding frame for better UX
+                play_lbl.bind("<Button-1>", lambda e: self.play_video(job))
+                thumb_lbl.bind("<Button-1>", lambda e: self.play_video(job))
             
         elif st == 'failed':
-            tk.Label(content, text=f"Failed", fg="red", bg="#f5f5f5").pack(expand=True)
+            ctk.CTkLabel(
+                content, 
+                text="Failed", 
+                font=("SF Pro Display", 12),
+                text_color="#ef4444"
+            ).pack(expand=True, pady=(15, 5))
             
-        # Hover
-        def on_enter(e): card.config(bg="#ecf0f1")
-        def on_leave(e): card.config(bg="white")
-        card.bind("<Enter>", on_enter)
-        card.bind("<Leave>", on_leave)
+            ctk.CTkButton(
+                content,
+                text="🔄 Retry",
+                font=("SF Pro Display", 11),
+                width=70,
+                height=28,
+                corner_radius=6,
+                fg_color="#374151",
+                hover_color="#4b5563",
+                command=retry
+            ).pack(pady=(0, 15))
+
+    def play_video(self, job):
+        if not job.get('video_url'):
+            return
+        
+        # Create video player popup
+        player = ctk.CTkToplevel(self.app.root)
+        player.title(f"Video Player - #{job['index']+1}")
+        player.geometry("720x480")
+        player.configure(fg_color="#0f0f23")
+        player.transient(self.app.root)
+        player.attributes("-topmost", True)  # Always on top
+        player.lift()
+        player.focus_force()
+        
+        # Video display
+        video_frame = ctk.CTkFrame(player, fg_color="#000000", corner_radius=0)
+        video_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        video_label = ctk.CTkLabel(video_frame, text="Loading...", text_color="#ffffff", font=("SF Pro Display", 14))
+        video_label.pack(expand=True)
+        
+        # Controls
+        controls = ctk.CTkFrame(player, fg_color="#1a1a2e", height=50, corner_radius=0)
+        controls.pack(fill="x", padx=10, pady=(0, 10))
+        controls.pack_propagate(False)
+        
+        ctrl_inner = ctk.CTkFrame(controls, fg_color="transparent")
+        ctrl_inner.pack(expand=True)
+        
+        is_playing = [True]
+        cap = [None]
+        
+        def stop_video():
+            is_playing[0] = False
+            if cap[0]:
+                cap[0].release()
+            player.destroy()
+        
+        ctk.CTkButton(
+            ctrl_inner,
+            text="⏹ Close",
+            font=("SF Pro Display", 12, "bold"),
+            width=100,
+            height=35,
+            corner_radius=8,
+            fg_color="#ef4444",
+            hover_color="#dc2626",
+            command=stop_video
+        ).pack(side="left", padx=10)
+        
+        # Open in browser button
+        import webbrowser
+        ctk.CTkButton(
+            ctrl_inner,
+            text="↗ Browser",
+            font=("SF Pro Display", 12),
+            width=100,
+            height=35,
+            corner_radius=8,
+            fg_color="#3b82f6",
+            hover_color="#2563eb",
+            command=lambda: webbrowser.open(job['video_url'])
+        ).pack(side="left", padx=10)
+        
+        player.bind("<Escape>", lambda e: stop_video())
+        player.protocol("WM_DELETE_WINDOW", stop_video)
+        
+        def play_thread():
+            try:
+                import cv2
+                cap[0] = cv2.VideoCapture(job['video_url'])
+                
+                if not cap[0].isOpened():
+                    player.after(0, lambda: video_label.configure(text="Cannot load video"))
+                    return
+                
+                fps = cap[0].get(cv2.CAP_PROP_FPS) or 30
+                delay = int(1000 / fps)
+                
+                while is_playing[0] and cap[0].isOpened():
+                    ret, frame = cap[0].read()
+                    if not ret:
+                        cap[0].set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        continue
+                    
+                    # Resize to fit
+                    h, w = frame.shape[:2]
+                    max_w, max_h = 700, 380
+                    scale = min(max_w/w, max_h/h)
+                    new_w, new_h = int(w*scale), int(h*scale)
+                    frame = cv2.resize(frame, (new_w, new_h))
+                    
+                    # Convert to RGB
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    img = Image.fromarray(frame_rgb)
+                    photo = ctk.CTkImage(light_image=img, dark_image=img, size=(new_w, new_h))
+                    
+                    if is_playing[0]:
+                        player.after(0, lambda p=photo: video_label.configure(image=p, text=""))
+                    
+                    cv2.waitKey(delay)
+                    
+            except ImportError:
+                player.after(0, lambda: video_label.configure(text="OpenCV not installed!\nOpening in browser..."))
+                player.after(2000, lambda: [webbrowser.open(job['video_url']), player.destroy()])
+            except Exception as e:
+                player.after(0, lambda: video_label.configure(text=f"Error: {str(e)[:50]}"))
+        
+        threading.Thread(target=play_thread, daemon=True).start()
 
     def download_all_videos(self):
         done = [j for j in self.app.job_queue if j['status'] == 'success' and j.get('video_url')]
-        if not done: return
+        if not done:
+            messagebox.showinfo("Info", "Chưa có video nào hoàn thành!")
+            return
+            
+    def add_mock_data(self):
+        mocks = [
+            {
+                "prompt": "Mock Test Video 1",
+                "image": None,
+                "video_url": "https://www.gstatic.com/aitestkitchen/website/flow/banners/20250814_0325_d1a5b056_bg.mp4",
+                "status": "success",
+                "progress": 100
+            },
+            {
+                "prompt": "Mock Test Video 2",
+                "image": None,
+                "video_url": "https://www.gstatic.com/aitestkitchen/website/flow/banners/flow31_bg_05905f5a.mp4",
+                "status": "success",
+                "progress": 100
+            }
+        ]
+        
+        for m in mocks:
+            idx = len(self.app.job_queue)
+            m['index'] = idx
+            self.app.job_queue.append(m)
+            
+        self.refresh_queue_preview()
+        self.refresh_progress_panel()
+        messagebox.showinfo("Mock Mode", "Đã thêm 2 video test!")
+        
+    def clear_queue(self):
+        # Keep only processing, polling or success jobs that user wants to keep?
+        # Typically "Clear Queue" clears pending and failed.
+        # But user might want to clear EVERYTHING except processing.
+        
+        running = [j for j in self.app.job_queue if j['status'] in ('processing', 'polling')]
+        if running:
+            # If jobs are running, only clear others
+            new_q = running
+            self.app.job_queue = new_q
+            self.refresh_queue_preview()
+            self.refresh_progress_panel()
+        else:
+            self.app.job_queue = []
+            self.refresh_queue_preview()
+            self.refresh_progress_panel()
+            
+        # Re-index
+        for i, j in enumerate(self.app.job_queue): j['index'] = i
         folder = filedialog.askdirectory()
         if not folder: return
         
-        try: start_idx = int(self.spin_start_index.get())
-        except: start_idx = 1
-        
         api = LabsApiService()
         for job in done:
-            idx = start_idx + job['index']
-            path = os.path.join(folder, f"video_{idx}.mp4")
-            threading.Thread(target=lambda: api.download_video(job['video_url'], path), daemon=True).start()
+            name = f"short_{job['image_name']}.mp4" if job.get('image_name') else f"video_{job['index']}.mp4"
+            path = os.path.join(folder, name)
+            url = job['video_url']
+            threading.Thread(target=lambda u=url, p=path: api.download_video(u, p), daemon=True).start()
+        
+        messagebox.showinfo("Info", f"⬇️ Đang tải {len(done)} video...")

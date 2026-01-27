@@ -12,17 +12,23 @@ if exist dist rmdir /s /q dist
 if exist *.spec del /q *.spec
 
 echo [3/3] Building EXE (Onefile)...
-:: --onefile: Pack everything into single exe
-:: --console: Keep console window for logs (Change to --noconsole to hide)
-:: --name: Output filename
-:: --add-data: Include app package source logic if needed or assets
-:: --collect-all: Ensure complex libs like selenium/certifi are fully included
-
-pyinstaller --noconfirm --onefile --console --name "LabsAutoTool" ^
-    --hidden-import "PIL" ^
+:: Excluding unnecessary heavy packages
+pyinstaller --noconfirm --onefile --noconsole --name "LabsAutoTool" ^
+    --exclude-module torch ^
+    --exclude-module torchvision ^
+    --exclude-module torchaudio ^
+    --exclude-module matplotlib ^
+    --exclude-module scipy ^
+    --exclude-module numpy.distutils ^
+    --exclude-module IPython ^
+    --exclude-module jupyter ^
+    --exclude-module notebook ^
     --hidden-import "PIL._tkinter_finder" ^
-    --collect-all "certifi" ^
-    --collect-all "selenium" ^
+    --hidden-import "cv2" ^
+    --hidden-import "pandas" ^
+    --hidden-import "openpyxl" ^
+    --hidden-import "openpyxl.cell._writer" ^
+    --collect-submodules "cv2" ^
     app/main.py
 
 echo.

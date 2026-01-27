@@ -14,20 +14,33 @@ class BrowserService:
 
     def close_all_sessions(self):
         """Closes all active browser sessions."""
+        # Create a copy of keys to iterate safely
         with self._lock:
-            for account_id in list(self._drivers.keys()):
-                self.quit_session(account_id)
+            ids = list(self._drivers.keys())
+            
+        for account_id in ids:
+            self.quit_session(account_id)
 
     def quit_session(self, account_id):
         """Closes a specific session."""
+        driver = None
         with self._lock:
             driver = self._drivers.pop(account_id, None)
-            if driver:
+            
+        if driver:
+            try:
+                print(f"[Browser] Closing browser session for {account_id}...")
+                driver.quit()
+            except Exception as e:
+                print(f"[Browser] Error closing session {account_id}: {e}")
                 try:
-                    print(f"[Browser] Closing browser session for {account_id}...")
-                    driver.quit()
-                except:
-                    pass
+                    # Force kill if needed (Windows specific)
+                    import psutil
+                    proc = psutil.Process(driver.service.process.pid)
+                    for child in proc.children(recursive=True):
+                        child.kill()
+                    proc.kill()
+                except: pass
 
     def launch_browser(self, json_data, detach=True):
         """Standard browser launch (not for background tasks)"""
@@ -75,10 +88,11 @@ class BrowserService:
             elif ss == 'none': new_cookie['sameSite'] = 'None'
         return new_cookie
 
-    def fetch_recaptcha_token(self, json_cookies, account_id=None, use_visible_browser=True, project_id=None):
+    def fetch_recaptcha_token(self, json_cookies, account_id=None, use_visible_browser=True, project_id=None, action='VIDEO_GENERATION'):
         """
         Main optimized method to fetch ReCaptcha tokens.
         If account_id is provided, the browser instance is reused.
+        action: 'VIDEO_GENERATION' or 'IMAGE_GENERATION'
         """
         # If no account_id, we use a temporary one or fall back to old behavior (but user wants persistent)
         # For safety with existing code calling without account_id, let's treat it as a temporary one
@@ -94,8 +108,8 @@ class BrowserService:
                 return None
 
             # Execute Script
-            print(f"[Browser][{account_id}] Requesting token...")
-            token = self._execute_token_script(driver)
+            print(f"[Browser][{account_id}] Requesting token for {action}...")
+            token = self._execute_token_script(driver, action)
             
             if token:
                 print(f"[Browser][{account_id}] Token Acquired!")
@@ -183,7 +197,7 @@ class BrowserService:
         })
         return driver
 
-    def _execute_token_script(self, driver):
+    def _execute_token_script(self, driver, action='VIDEO_GENERATION'):
         # Wait for grecaptcha
         max_wait = 30
         for _ in range(max_wait * 2):
@@ -195,19 +209,19 @@ class BrowserService:
         
         # Execute
         try:
-            res = driver.execute_async_script("""
+            res = driver.execute_async_script(f"""
                 const callback = arguments[arguments.length - 1];
-                grecaptcha.enterprise.ready(async () => {
-                    try {
+                grecaptcha.enterprise.ready(async () => {{
+                    try {{
                         const token = await grecaptcha.enterprise.execute(
                             '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV', 
-                            {action: 'VIDEO_GENERATION'}
+                            {{action: '{action}'}}
                         );
-                        callback({token: token});
-                    } catch (e) {
-                        callback({error: e.toString()});
-                    }
-                });
+                        callback({{token: token}});
+                    }} catch (e) {{
+                        callback({{error: e.toString()}});
+                    }}
+                }});
             """)
             if isinstance(res, dict):
                 return res.get('token')
@@ -216,5 +230,5 @@ class BrowserService:
             return None
 
     # Legacy method compatibility
-    def fetch_recaptcha_token_with_project(self, json_cookies, project_id, use_visible_browser=True):
-        return self.fetch_recaptcha_token(json_cookies, account_id=None, use_visible_browser=use_visible_browser, project_id=project_id)
+    def fetch_recaptcha_token_with_project(self, json_cookies, project_id, account_id=None, use_visible_browser=True, action='VIDEO_GENERATION'):
+        return self.fetch_recaptcha_token(json_cookies, account_id=account_id, use_visible_browser=use_visible_browser, project_id=project_id, action=action)

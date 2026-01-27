@@ -34,6 +34,13 @@ class AccountManager:
                 email = urllib.parse.unquote(c.get('value', ''))
                 break
         
+        # Check duplicate email
+        if email != "Unknown":
+            for acc in self.accounts:
+                existing_email = acc.get('name', '').split(' (')[0]
+                if existing_email.lower() == email.lower():
+                    raise ValueError(f"Tài khoản {email} đã tồn tại!")
+        
         name = f"{email} ({len(self.accounts) + 1})"
         
         account = {

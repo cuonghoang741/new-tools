@@ -1,6 +1,6 @@
 
-import tkinter as tk
-from tkinter import ttk, messagebox
+import customtkinter as ctk
+from tkinter import messagebox
 import threading
 import json
 import os
@@ -8,12 +8,15 @@ import os
 from app.services.account_manager import AccountManager
 from app.services.browser_service import BrowserService
 from app.services.auth_service import AuthService
-from app.ui.rounded_button import RoundedButton
 from app.ui.screens.account_screen import AccountScreen
 from app.ui.screens.video_screen import VideoScreen
 from app.ui.screens.image_screen import ImageScreen
 from app.ui.screens.login_screen import LoginScreen
 from app.ui.screens.profile_screen import ProfileScreen
+
+# Set appearance mode and color theme
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 class MainWindow:
     def __init__(self, root):
@@ -33,26 +36,35 @@ class MainWindow:
         self.job_queue = []
         self.running_jobs = {} 
         self.is_running = False
-        self.max_jobs_per_account = 4 # Default
+        self.max_jobs_per_account = 4
         
         # Image State
         self.image_job_queue = []
         self.is_image_running = False
         
-        self.thumbnail_cache = {} 
-
-        # UI Resources
-        self.style = ttk.Style()
-        self.style.theme_use('clam')
+        self.thumbnail_cache = {}
         
         self.frames = {}
         self.screens = {}
+        self.current_view = None
         
         # Check Auth
         if self.auth_service.load_token():
             self.check_auth_and_redirect()
         else:
             self.show_login()
+            
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def on_closing(self):
+        if messagebox.askokcancel("Quit", "Bạn có muốn thoát ứng dụng?"):
+            self.is_running = False
+            self.is_image_running = False
+            try:
+                print("Closing all browser sessions...")
+                self.browser_service.close_all_sessions()
+            except: pass
+            self.root.destroy()
 
     def show_login(self):
         for w in self.root.winfo_children(): w.destroy()
@@ -71,84 +83,114 @@ class MainWindow:
             self.auth_service.logout()
             self.show_login()
             if hasattr(self, 'login_screen'):
-                self.login_screen.lbl_msg.config(text=str(msg))
+                self.login_screen.lbl_msg.configure(text=str(msg))
 
     def setup_main_interface(self):
         for w in self.root.winfo_children(): w.destroy()
         
-        self.main_container = tk.Frame(self.root)
+        self.main_container = ctk.CTkFrame(self.root, fg_color="transparent")
         self.main_container.pack(fill="both", expand=True)
         
-        # Sidebar
-        self.sidebar = tk.Frame(self.main_container, bg="#2c3e50", width=220)
-        self.sidebar.pack(side="left", fill="y", ipadx=5)
+        # Sidebar with gradient-like effect
+        self.sidebar = ctk.CTkFrame(self.main_container, width=240, corner_radius=0, fg_color="#1a1a2e")
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
         
-        tk.Label(self.sidebar, text="🤖 Labs Tool", bg="#2c3e50", fg="white", font=("Segoe UI", 18, "bold")).pack(pady=30)
+        # Logo Section
+        logo_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        logo_frame.pack(fill="x", pady=(30, 40), padx=20)
         
-        self.btn_acc = RoundedButton(self.sidebar, text="Quản lý Tài khoản", command=lambda: self.show_view("account"), width=180, height=40, bg_color="#2c3e50", fg_color="#34495e", hover_color="#1abc9c")
-        self.btn_acc.pack(pady=5)
+        ctk.CTkLabel(logo_frame, text="🤖", font=("Segoe UI Emoji", 36)).pack()
+        ctk.CTkLabel(logo_frame, text="Labs Tool Pro", font=("SF Pro Display", 22, "bold"), text_color="#ffffff").pack()
+        ctk.CTkLabel(logo_frame, text="Batch Automation", font=("SF Pro Display", 11), text_color="#6c7293").pack()
         
-        self.btn_vid = RoundedButton(self.sidebar, text="Tạo Video (Batch)", command=lambda: self.show_view("video"), width=180, height=40, bg_color="#2c3e50", fg_color="#2c3e50", hover_color="#1abc9c")
-        self.btn_vid.pack(pady=5)
+        # Navigation Buttons
+        nav_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        nav_frame.pack(fill="x", padx=15)
         
-        self.btn_img = RoundedButton(self.sidebar, text="Tạo Ảnh (Batch)", command=lambda: self.show_view("image"), width=180, height=40, bg_color="#2c3e50", fg_color="#2c3e50", hover_color="#1abc9c")
-        self.btn_img.pack(pady=5)
+        self.nav_buttons = {}
+        nav_items = [
+            ("account", "👥", "Tài khoản"),
+            ("video", "🎬", "Tạo Video"),
+            ("image", "✨", "Tạo Ảnh"),
+            ("profile", "⚙️", "Cài đặt")
+        ]
         
-        self.btn_profile = RoundedButton(self.sidebar, text="Profile & License", command=lambda: self.show_view("profile"), width=180, height=40, bg_color="#2c3e50", fg_color="#2c3e50", hover_color="#1abc9c")
-        self.btn_profile.pack(pady=5)
+        for key, icon, text in nav_items:
+            btn = ctk.CTkButton(
+                nav_frame, 
+                text=f"  {icon}  {text}",
+                font=("SF Pro Display", 13),
+                height=45,
+                corner_radius=12,
+                fg_color="transparent",
+                text_color="#a0a3bd",
+                hover_color="#16213e",
+                anchor="w",
+                command=lambda k=key: self.show_view(k)
+            )
+            btn.pack(fill="x", pady=3)
+            self.nav_buttons[key] = btn
+        
+        # Version info at bottom
+        version_label = ctk.CTkLabel(
+            self.sidebar, 
+            text="v2.0.0 • Dark Mode", 
+            font=("SF Pro Display", 10), 
+            text_color="#4a4a6a"
+        )
+        version_label.pack(side="bottom", pady=20)
         
         # Content Area
-        self.content_area = tk.Frame(self.main_container, bg="white")
+        self.content_area = ctk.CTkFrame(self.main_container, fg_color="#0f0f23", corner_radius=0)
         self.content_area.pack(side="left", fill="both", expand=True)
         
         # Initialize Screens
-        self.frames["account"] = tk.Frame(self.content_area, bg="white")
+        self.frames["account"] = ctk.CTkFrame(self.content_area, fg_color="transparent")
         self.screens["account"] = AccountScreen(self.frames["account"], self)
         
-        self.frames["video"] = tk.Frame(self.content_area, bg="white")
+        self.frames["video"] = ctk.CTkFrame(self.content_area, fg_color="transparent")
         self.screens["video"] = VideoScreen(self.frames["video"], self)
         
-        self.frames["image"] = tk.Frame(self.content_area, bg="white")
+        self.frames["image"] = ctk.CTkFrame(self.content_area, fg_color="transparent")
         self.screens["image"] = ImageScreen(self.frames["image"], self)
         
-        self.frames["profile"] = tk.Frame(self.content_area, bg="white")
+        self.frames["profile"] = ctk.CTkFrame(self.content_area, fg_color="transparent")
         self.screens["profile"] = ProfileScreen(self.frames["profile"], self)
         
         self.show_view("account")
 
     def show_view(self, name):
-        buttons = {
-            "account": self.btn_acc, 
-            "video": self.btn_vid, 
-            "image": self.btn_img,
-            "profile": self.btn_profile
-        }
+        # Update nav button states
+        for key, btn in self.nav_buttons.items():
+            if key == name:
+                btn.configure(fg_color="#6366f1", text_color="#ffffff", hover_color="#5855eb")
+            else:
+                btn.configure(fg_color="transparent", text_color="#a0a3bd", hover_color="#16213e")
         
-        for key, btn in buttons.items():
-            color = "#34495e" if key == name else "#2c3e50"
-            btn.itemconfig(btn.rect, fill=color, outline=color)
-            btn.fg_color = color
-            
-            if key in self.frames:
-                if key == name:
-                    self.frames[key].pack(fill="both", expand=True)
-                    if key == "account": self.screens["account"].refresh_ui()
-                    if key == "profile": self.screens["profile"].setup_ui() # Refresh profile
-                else:
-                    self.frames[key].pack_forget()
+        # Show/hide frames
+        for key in self.frames:
+            if key == name:
+                self.frames[key].pack(fill="both", expand=True, padx=20, pady=20)
+                if key == "account": self.screens["account"].refresh_ui()
+                if key == "profile": self.screens["profile"].setup_ui()
+            else:
+                self.frames[key].pack_forget()
+        
+        self.current_view = name
 
     def show_setup_guide(self):
         msg = """
-        Hướng dẫn Setup:
-        1. Cài đặt Python 3.12+
-        2. Cài Chrome
-        3. Lấy Cookie từ Labs.google bằng EditThisCookie:
-           - Login Labs
-           - Click Extension -> Export (Clipboard)
-           - Vào App -> Thêm Cookie -> Paste
-        4. Để tạo Video/Ảnh:
-           - Chuẩn bị file Excel (.xlsx)
-           - Cột 'prompt': Nội dung Text
-           - Cột 'image': Đường dẫn ảnh (Nếu muốn Image-to-Video/Image)
+        Hướng dẫn thêm tài khoản:
+        
+        1. Tải Extension hỗ trợ từ Google Drive (link trong phần hướng dẫn chi tiết).
+        2. Mở trình duyệt, vào phần quản lý Extensions, bật "Developer Mode".
+        3. Kéo thả file extension vừa tải vào để cài đặt.
+        4. Truy cập https://labs.google/fx/vi/tools/flow và đăng nhập.
+        5. Mở Extension vừa cài, click "Copy JSON" để lấy cookie.
+        6. Quay lại App -> Tab Tài khoản -> Bấm "➕ Thêm Cookie" và dán vào.
+        
+        Để tạo Video/Ảnh:
+        - Chuẩn bị file Excel (.xlsx) với cột 'prompt' (và 'image' nếu cần).
         """
         messagebox.showinfo("Hướng dẫn", msg)
