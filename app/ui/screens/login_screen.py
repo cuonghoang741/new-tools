@@ -39,7 +39,7 @@ class LoginScreen:
         # Title
         ctk.CTkLabel(
             inner, 
-            text="Animo Studio Bot", 
+            text="Trust Labs", 
             font=("SF Pro Display", 24, "bold"),
             text_color="#ffffff"
         ).pack(pady=(0, 5))

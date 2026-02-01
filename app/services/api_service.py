@@ -437,6 +437,120 @@ class LabsApiService:
         response.raise_for_status()
         return response.json()
 
+    def generate_video_start_end_image(self, prompt, start_image_media_id, end_image_media_id, aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE", count=1, project_id=None, recaptcha_token=None):
+        """Generate video with Start Image and End Image (Image-to-Image-to-Video)"""
+        import time
+        import random
+        
+        session_id = f";{int(time.time()*1000)}"
+        current_project_id = project_id if project_id else "7636a948-fa89-4449-a8a5-72c9e008d268"
+
+        # 0. Search Project Scenes (Pre-check)
+        self.search_project_scenes(current_project_id)
+
+        # Generate cache ID for this video generation
+        cache_id = f"PINHOLE_MAIN_VIDEO_GENERATION_CACHE_ID{self._generate_guid()}"
+
+        # 1. Log: VIDEOFX_CREATE_VIDEO
+        props_create_video = [
+            {"key": "TOOL_NAME", "stringValue": "PINHOLE"},
+            {"key": "QUERY_ID", "stringValue": cache_id},
+            {"key": "PINHOLE_VIDEO_ASPECT_RATIO", "stringValue": aspect_ratio},
+            {"key": "G1_PAYGATE_TIER", "stringValue": "PAYGATE_TIER_TWO"},
+            {"key": "PINHOLE_PROMPT_BOX_MODE", "stringValue": "IMAGE_TO_VIDEO"},
+            {"key": "USER_AGENT", "stringValue": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
+            {"key": "IS_DESKTOP"}
+        ]
+        self.submit_batch_log(session_id, "VIDEOFX_CREATE_VIDEO", properties=props_create_video)
+
+        # 2. Log: VIDEO_CREATION_TO_VIDEO_COMPLETION (timer event)
+        timer_guid = cache_id.replace("PINHOLE_MAIN_VIDEO_GENERATION_CACHE_ID", "")
+        timer_id = f"VIDEO_CREATION_TO_VIDEO_COMPLETION{timer_guid}"
+        props_timer = [
+            {"key": "TIMER_ID", "stringValue": timer_id},
+            {"key": "TOOL_NAME", "stringValue": "PINHOLE"},
+            {"key": "CURRENT_TIME_MS", "intValue": f"{int(time.time()*1000)}"},
+            {"key": "USER_AGENT", "stringValue": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
+            {"key": "IS_DESKTOP"}
+        ]
+        self.submit_batch_log(session_id, "VIDEO_CREATION_TO_VIDEO_COMPLETION", properties=props_timer)
+
+        url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoStartAndEndImage"
+        
+        requests_list = []
+        
+        for _ in range(count):
+            seed = random.randint(1000, 9999)
+            
+            # Model keys for start+end image video:
+            # veo_3_1_i2v_s_fl (Landscape with first/last frames)
+            # veo_3_1_i2v_s_fl_portrait (Portrait)
+            
+            model_key = "veo_3_1_i2v_s_fl"
+            if aspect_ratio == "VIDEO_ASPECT_RATIO_PORTRAIT":
+                model_key = "veo_3_1_i2v_s_fl_portrait"
+
+            req_item = {
+                "aspectRatio": aspect_ratio,
+                "seed": seed,
+                "textInput": {
+                    "prompt": prompt
+                },
+                "videoModelKey": model_key,
+                "startImage": {
+                    "mediaId": start_image_media_id
+                },
+                "endImage": {
+                    "mediaId": end_image_media_id
+                },
+                "metadata": {
+                    "sceneId": self._generate_guid() 
+                }
+            }
+            requests_list.append(req_item)
+            
+        payload = {
+            "clientContext": {
+                "recaptchaContext": {
+                    "token": recaptcha_token,
+                    "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+                },
+                "sessionId": session_id,
+                "projectId": current_project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO"
+            },
+            "requests": requests_list
+        }
+        
+        headers = self._get_headers()
+        headers.update({
+             "sec-ch-ua-platform": "\"Windows\"",
+             "Referer": "https://labs.google/",
+             "Origin": "https://labs.google",
+             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+             "sec-ch-ua": "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Google Chrome\";v=\"144\"",
+             "Content-Type": "text/plain;charset=UTF-8",
+             "x-browser-channel": "stable",
+             "x-browser-copyright": "Copyright 2026 Google LLC. All Rights reserved.",
+             "x-browser-validation": "PHzxKQDW1JU+MpcuUrBanuCqlLI=",
+             "x-browser-year": "2026",
+             "x-client-data": "CIa2yQEIpbbJAQipncoBCNvaygEIk6HLAQiFoM0BCJKkzwEIqqbPAQjaqs8B"
+        })
+        
+        print(f"\n[DEBUG] Calling generate_video_start_end_image used ProjectID: {payload['clientContext']['projectId']}")
+        
+        response = self.session.post(url, headers=headers, json=payload)
+        
+        print(f"[DEBUG] Generate Start+End Response Status: {response.status_code}")
+        if response.status_code >= 400:
+             print(f"[DEBUG] Generate Error Body: {response.text}")
+             if "reCAPTCHA" in response.text:
+                 raise Exception("Google yêu cầu Recaptcha! Hiện tại API không thể bypass.\nVui lòng mở 'Browser' từ danh sách tài khoản để tạo thủ công.")
+
+        response.raise_for_status()
+        return response.json()
+
     def generate_video_text(self, prompt, aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE", count=1, project_id=None, recaptcha_token=None):
         """Generate video from Text only (Text-to-Video)"""
         import time
@@ -831,3 +945,148 @@ class LabsApiService:
         
         return None
 
+    def upscale_image(self, media_id, session_id=None, project_id=None, recaptcha_token=None, resolution="2K"):
+        """
+        Upscales an image to higher resolution (2K or 4K).
+        
+        Flow:
+        1. Log DOWNLOAD event
+        2. Log PINHOLE_UPSCALE_IMAGE event
+        3. Call upsampleImage API with recaptcha token
+        4. Return base64 encoded image data
+        
+        Args:
+            media_id: The mediaGenerationId of the image
+            session_id: Session ID (auto-generated if not provided)
+            project_id: Project ID 
+            recaptcha_token: Recaptcha token (required for API call)
+            resolution: '2K' or '4K' (default: '2K')
+            
+        Returns:
+            dict with 'encodedImage' (base64) or None on failure
+        """
+        import time
+        
+        # Ensure we have an access token (Bearer)
+        if not self.auth_token:
+            print("[API] Access Token missing, fetching new one...")
+            self.fetch_access_token()
+            
+        if not session_id:
+            session_id = f";{int(time.time()*1000)}"
+             
+        if not project_id:
+            project_id = "fc5539a3-963d-4bef-ad1a-090fe79b5c54"  # Default
+
+        # 1. Log DOWNLOAD event first
+        props_download = [
+            {"key": "TOOL_NAME", "stringValue": "PINHOLE"},
+            {"key": "USER_AGENT", "stringValue": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
+            {"key": "IS_DESKTOP"}
+        ]
+        meta_download = {"mediaGenerationId": media_id, "sessionId": session_id}
+        self.submit_batch_log(session_id, "DOWNLOAD", metadata=meta_download, properties=props_download)
+        
+        # 2. Log PINHOLE_UPSCALE_IMAGE event
+        props_upscale = [
+            {"key": "TOOL_NAME", "stringValue": "PINHOLE"},
+            {"key": "PINHOLE_VIEW", "stringValue": "ASSETS"},
+            {"key": "PINHOLE_IMAGE_ASPECT_RATIO", "stringValue": "IMAGE_ASPECT_RATIO_LANDSCAPE"},
+            {"key": "G1_PAYGATE_TIER", "stringValue": "PAYGATE_TIER_TWO"},
+            {"key": "PINHOLE_PROMPT_BOX_MODE", "stringValue": "IMAGE_GENERATION"},
+            {"key": "USER_AGENT", "stringValue": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
+            {"key": "IS_DESKTOP"}
+        ]
+        meta_upscale = {"sessionId": session_id}
+        self.submit_batch_log(session_id, "PINHOLE_UPSCALE_IMAGE", metadata=meta_upscale, properties=props_upscale)
+
+        # 3. Call upsampleImage API
+        url = "https://aisandbox-pa.googleapis.com/v1/flow/upsampleImage"
+        
+        # Map resolution to API value
+        resolution_map = {
+            "2K": "UPSAMPLE_IMAGE_RESOLUTION_2K",
+            "4K": "UPSAMPLE_IMAGE_RESOLUTION_4K"
+        }
+        target_resolution = resolution_map.get(resolution, "UPSAMPLE_IMAGE_RESOLUTION_2K")
+        
+        payload = {
+            "mediaId": media_id,
+            "targetResolution": target_resolution,
+            "clientContext": {
+                "recaptchaContext": {
+                    "token": recaptcha_token if recaptcha_token else "",
+                    "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+                },
+                "sessionId": session_id,
+                "projectId": project_id,
+                "tool": "PINHOLE"
+            }
+        }
+        
+        headers = self._get_headers()
+        headers.update({
+             "Referer": "https://labs.google/",
+             "Origin": "https://labs.google",
+             "sec-ch-ua-platform": "\"Windows\"",
+             "sec-ch-ua": "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Google Chrome\";v=\"144\"",
+             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+             "Content-Type": "text/plain;charset=UTF-8",
+             "x-browser-channel": "stable",
+             "x-browser-copyright": "Copyright 2026 Google LLC. All Rights reserved.",
+             "x-browser-validation": "AKIAtsVHZoiKbPixy+qSK1BgKWo=",
+             "x-browser-year": "2026",
+             "x-client-data": "CIa2yQEIpbbJAQipncoBCNvaygEIlKHLAQiFoM0BCKqmzwEI2qrPARjEq88B"
+        })
+        
+        print(f"[API] Upscaling Image 2K: {media_id}")
+        
+        # Use data=json.dumps(payload) instead of json=payload to preserve Content-Type
+        resp = self.session.post(url, headers=headers, data=json.dumps(payload))
+        
+        print(f"[DEBUG] Upscale Response Status: {resp.status_code}")
+        if resp.status_code >= 400:
+             print(f"[DEBUG] Upscale Error: {resp.text}")
+             
+        resp.raise_for_status()
+        
+        data = resp.json()
+        
+        # Response format: { "encodedImage": "/9j/4A..." }
+        if 'encodedImage' in data:
+            print(f"[API] Upscale success! Got base64 image ({len(data['encodedImage'])} chars)")
+            return data
+        
+        print(f"[DEBUG] Unexpected upscale response: {data}")
+        return None
+
+    def save_upscaled_image(self, encoded_image, save_path):
+        """
+        Save base64 encoded image to file.
+        
+        Args:
+            encoded_image: Base64 encoded image string
+            save_path: Path to save the image
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import base64
+            import os
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
+            
+            # Decode base64 and save
+            image_data = base64.b64decode(encoded_image)
+            
+            with open(save_path, 'wb') as f:
+                f.write(image_data)
+            
+            print(f"[API] Saved 2K image: {save_path} ({len(image_data)} bytes)")
+            return True
+            
+        except Exception as e:
+            print(f"[API] Error saving image: {e}")
+            return False

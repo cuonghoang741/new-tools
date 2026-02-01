@@ -13,6 +13,8 @@ class VideoScreen:
         self.auto_download_dir = None
         self.queue_page = 1
         self.queue_per_page = 20
+        self.job_cards = {}  # Cache for progress cards {job_index: {frame, refs, last_status}}
+        self.queue_row_pool = [] # Pool of widgets for queue list items
         self.setup_ui()
 
     def setup_ui(self):
@@ -55,8 +57,8 @@ class VideoScreen:
             width=100,
             height=38,
             corner_radius=10,
-            fg_color="#f97316",
-            hover_color="#ea580c",
+            fg_color="#374151",
+            hover_color="#4b5563",
             command=self.import_excel
         ).pack(side="left", padx=5)
         
@@ -216,7 +218,7 @@ class VideoScreen:
         # Tip
         tip = ctk.CTkLabel(
             left_panel, 
-            text="💡 Đặt ảnh cùng folder với Excel để chỉ nhập tên file", 
+            text="💡 Cột 'image' (start), 'image_2' (end - tùy chọn), 'prompt' bắt buộc", 
             font=("SF Pro Display", 10),
             text_color="#6c7293",
             wraplength=340
@@ -296,7 +298,7 @@ class VideoScreen:
         save_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")], initialfile="template_video.xlsx")
         if not save_path: return
         try:
-            data = {"image": ["dog.jpg", "cat.png"], "prompt": ["cute dog", "cat playing"]}
+            data = {"image": ["start1.jpg", "start2.png"], "image_2": ["end1.jpg", ""], "prompt": ["animate from start to end", "cat playing"]}
             pd.DataFrame(data).to_excel(save_path, index=False)
             messagebox.showinfo("Success", f"✅ Đã tạo template:\n{save_path}")
             os.startfile(os.path.dirname(save_path))
@@ -311,6 +313,13 @@ class VideoScreen:
             
         if messagebox.askyesno("Xác nhận", "Xóa toàn bộ queue?"):
             self.app.job_queue = []
+            
+            # Clear job cards cache to remove internal references
+            for idx in list(self.job_cards.keys()):
+                if self.job_cards[idx]['frame'].winfo_exists():
+                    self.job_cards[idx]['frame'].destroy()
+            self.job_cards.clear()
+            
             self.refresh_queue_preview()
             self.refresh_progress_panel()
             self.lbl_status.configure(text="🗑️ Đã xóa queue")
@@ -326,12 +335,23 @@ class VideoScreen:
                 return
             
             has_image_col = 'image' in df.columns
+            has_image_2_col = 'image_2' in df.columns
+            
+            # Reset queue and cards
             self.app.job_queue = []
+            for idx in list(self.job_cards.keys()):
+                if self.job_cards[idx]['frame'].winfo_exists():
+                    self.job_cards[idx]['frame'].destroy()
+            self.job_cards.clear()
+            
             base_dir = os.path.dirname(filepath)
             
             for idx, row in df.iterrows():
                 image_path = None
                 image_name = None
+                image_2_path = None
+                
+                # Parse image (start image)
                 if has_image_col:
                     val = str(row['image']).strip()
                     if val and val.lower() not in ('nan', 'none', ''):
@@ -339,10 +359,18 @@ class VideoScreen:
                         if not os.path.exists(image_path): image_path = None
                         else: image_name = os.path.splitext(os.path.basename(image_path))[0]
                 
+                # Parse image_2 (end image)
+                if has_image_2_col:
+                    val2 = str(row['image_2']).strip()
+                    if val2 and val2.lower() not in ('nan', 'none', ''):
+                        image_2_path = val2 if os.path.isabs(val2) else os.path.join(base_dir, val2)
+                        if not os.path.exists(image_2_path): image_2_path = None
+                
                 prompt = str(row['prompt']).strip()
                 self.app.job_queue.append({
                     'index': len(self.app.job_queue),
                     'image': image_path,
+                    'image_2': image_2_path,
                     'image_name': image_name,
                     'prompt': prompt,
                     'status': 'pending',
@@ -355,8 +383,7 @@ class VideoScreen:
             messagebox.showerror("Error", f"Lỗi Import: {e}")
 
     def refresh_queue_preview(self):
-        for w in self.queue_scroll.winfo_children(): w.destroy()
-        self.app.thumbnail_cache = {}
+        # NOTE: self.app.thumbnail_cache is used for queue list.
         
         total_jobs = len(self.app.job_queue)
         self.queue_count_label.configure(text=f"{total_jobs} jobs")
@@ -376,9 +403,234 @@ class VideoScreen:
         self.btn_prev.configure(state="normal" if self.queue_page > 1 else "disabled")
         self.btn_next.configure(state="normal" if self.queue_page < total_pages else "disabled")
         
-        for idx, job in enumerate(page_items):
-            # Pass absolute index to create_queue_item if needed, or just job object
-            self.create_queue_item(job['index'], job)
+        # --- VIRTUAL DOM UPDATE ---
+        # 1. Update needed rows
+        for i, job in enumerate(page_items):
+            if i >= len(self.queue_row_pool):
+                self.create_queue_row_structure()
+            
+            row_widgets = self.queue_row_pool[i]
+            self.update_queue_row(row_widgets, job)
+            # Ensure visible
+            if not row_widgets['frame'].winfo_ismapped():
+                row_widgets['frame'].pack(fill="x", pady=4)
+
+        # 2. Hide only unused rows
+        for i in range(len(page_items), len(self.queue_row_pool)):
+            self.queue_row_pool[i]['frame'].pack_forget()
+
+    def create_queue_row_structure(self):
+        item = ctk.CTkFrame(self.queue_scroll, fg_color="#16213e", corner_radius=12, height=70)
+        item.pack_propagate(False)
+        
+        inner = ctk.CTkFrame(item, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=12, pady=10)
+        
+        # Status/Action (Pack RIGHT first to reserve space)
+        right_box = ctk.CTkFrame(inner, fg_color="transparent")
+        right_box.pack(side="right", padx=(0, 5))
+        
+        # Helper container for delete button to enforce size
+        del_container = ctk.CTkFrame(right_box, width=30, height=30, fg_color="transparent")
+        del_container.pack(side="right", padx=5)
+        del_container.pack_propagate(False)
+
+        del_btn = ctk.CTkButton(
+            del_container, 
+            text="✕", 
+            width=30, 
+            height=30,
+            fg_color="transparent", 
+            hover_color="#ef4444",
+            text_color="#6c7293",
+            font=("SF Pro Display", 14, "bold"),
+            command=lambda: None
+        )
+        del_btn.pack(fill="both", expand=True)
+        
+        status_lbl = ctk.CTkLabel(right_box, text="", font=("SF Pro Display", 11, "bold"), text_color="#9ca3af")
+        status_lbl.pack(side="right", padx=5)
+
+        # Thumbnail Container (Left) - holds both start and end images
+        thumb_container = ctk.CTkFrame(inner, fg_color="transparent")
+        thumb_container.pack(side="left")
+        
+        # Start Image Thumbnail
+        thumb_frame = ctk.CTkFrame(thumb_container, width=44, height=44, fg_color="#2a2a4e", corner_radius=6)
+        thumb_frame.pack(side="left")
+        thumb_frame.pack_propagate(False)
+        
+        thumb_lbl = ctk.CTkLabel(thumb_frame, text="", font=("SF Pro Display", 9, "bold"), text_color="#6c7293")
+        thumb_lbl.pack(expand=True)
+        
+        # Arrow between thumbnails
+        arrow_lbl = ctk.CTkLabel(thumb_container, text="→", font=("SF Pro Display", 12, "bold"), text_color="#6366f1")
+        arrow_lbl.pack(side="left", padx=2)
+        
+        # End Image Thumbnail
+        thumb_frame_2 = ctk.CTkFrame(thumb_container, width=44, height=44, fg_color="#2a2a4e", corner_radius=6)
+        thumb_frame_2.pack(side="left")
+        thumb_frame_2.pack_propagate(False)
+        
+        thumb_lbl_2 = ctk.CTkLabel(thumb_frame_2, text="", font=("SF Pro Display", 9, "bold"), text_color="#6c7293")
+        thumb_lbl_2.pack(expand=True)
+        
+        # Info (Left, takes remaining space)
+        info = ctk.CTkFrame(inner, fg_color="transparent")
+        info.pack(side="left", fill="both", expand=True, padx=10)
+        
+        title_lbl = ctk.CTkLabel(info, text="", font=("SF Pro Display", 12, "bold"), text_color="#ffffff", anchor="w")
+        title_lbl.pack(fill="x")
+        
+        desc_lbl = ctk.CTkLabel(info, text="", font=("SF Pro Display", 11), text_color="#9ca3af", anchor="w")
+        desc_lbl.pack(fill="x")
+        
+        self.queue_row_pool.append({
+            'frame': item,
+            'thumb_lbl': thumb_lbl,
+            'thumb_lbl_2': thumb_lbl_2,
+            'thumb_frame_2': thumb_frame_2,
+            'arrow_lbl': arrow_lbl,
+            'title_lbl': title_lbl,
+            'desc_lbl': desc_lbl,
+            'status_lbl': status_lbl,
+            'del_btn': del_btn,
+            'last_job_id': None
+        })
+
+    def update_queue_row(self, widgets, job):
+        idx = job.get('index', 0)
+        
+        # Unique signature for this row's content
+        job_signature = f"{idx}_{id(job)}"
+        
+        # Only update if job changed for this row slot
+        if widgets.get('last_job_id') == job_signature:
+             # Still update dynamic status
+             pass
+        else:
+             widgets['last_job_id'] = job_signature
+             
+             job_type = "Img→Img→Vid" if (job.get('image') and job.get('image_2')) else ("Img→Vid" if job.get('image') else "Text→Vid")
+             widgets['title_lbl'].configure(text=f"#{idx+1} {job_type}")
+             
+             prompt = job.get('prompt', '')
+             short_prompt = (prompt[:40] + '...') if len(prompt) > 40 else prompt
+             widgets['desc_lbl'].configure(text=short_prompt)
+             
+             # Delete Button
+             widgets['del_btn'].configure(command=lambda: self.remove_job_by_index(idx))
+
+             # Start Image Thumbnail
+             img_path = job.get('image')
+             thumb_key = f"vid_thumb_{id(job)}"
+             
+             if thumb_key in self.app.thumbnail_cache:
+                  widgets['thumb_lbl'].configure(image=self.app.thumbnail_cache[thumb_key], text="")
+             else:
+                  if img_path and os.path.exists(img_path):
+                      try:
+                          img = Image.open(img_path)
+                          img.thumbnail((42, 42))
+                          photo = ctk.CTkImage(light_image=img, dark_image=img, size=(42, 42))
+                          self.app.thumbnail_cache[thumb_key] = photo
+                          widgets['thumb_lbl'].configure(image=photo, text="")
+                      except:
+                          widgets['thumb_lbl'].configure(image=None, text="ERR")
+                  else:
+                      widgets['thumb_lbl'].configure(image=None, text="TXT" if not img_path else "N/A")
+             
+             # End Image Thumbnail (image_2)
+             img_path_2 = job.get('image_2')
+             thumb_key_2 = f"vid_thumb2_{id(job)}"
+             
+             # Show/hide end image components based on whether there's an end image
+             if img_path_2:
+                  widgets['arrow_lbl'].pack(side="left", padx=2)
+                  widgets['thumb_frame_2'].pack(side="left")
+                  
+                  if thumb_key_2 in self.app.thumbnail_cache:
+                       widgets['thumb_lbl_2'].configure(image=self.app.thumbnail_cache[thumb_key_2], text="")
+                  else:
+                       if os.path.exists(img_path_2):
+                           try:
+                               img2 = Image.open(img_path_2)
+                               img2.thumbnail((42, 42))
+                               photo2 = ctk.CTkImage(light_image=img2, dark_image=img2, size=(42, 42))
+                               self.app.thumbnail_cache[thumb_key_2] = photo2
+                               widgets['thumb_lbl_2'].configure(image=photo2, text="")
+                           except:
+                               widgets['thumb_lbl_2'].configure(image=None, text="ERR")
+                       else:
+                           widgets['thumb_lbl_2'].configure(image=None, text="N/A")
+             else:
+                  # Hide end image components if no image_2
+                  widgets['arrow_lbl'].pack_forget()
+                  widgets['thumb_frame_2'].pack_forget()
+
+        # Status (always update)
+        st = job.get('status', 'pending')
+        status_config = {
+            'pending': ('⏳', '#f59e0b'),
+            'processing': ('⚙️', '#3b82f6'),
+            'polling': ('👁️', '#8b5cf6'),
+            'success': ('✅', '#22c55e'),
+            'failed': ('⛔', '#ef4444')
+        }
+        icon, color = status_config.get(st, ('○', '#9ca3af'))
+        widgets['status_lbl'].configure(text=icon, text_color=color, font=("Segoe UI Emoji", 16))
+
+    def remove_job_by_index(self, idx):
+        # Find local index
+        local_idx = -1
+        for i, job in enumerate(self.app.job_queue):
+            if job['index'] == idx:
+                local_idx = i
+                break
+        
+        if local_idx != -1:
+            self.app.job_queue.pop(local_idx)
+            self.refresh_queue_preview()  # Re-render efficient layout
+
+    def test_upscale_2k(self):
+        """Hardcoded test for 2K upscale debug (Copy from Image Screen)"""
+        media_id = "CAMSJGYyZjQ0YzQ0LWVkN2YtNGMwOC1iMjU1LTg2ZWU2NjNjZWFjMRokN2VlODBiNDItOWRiNi00MjI3LWEzNmEtYjY1OGZkNWZiMjE0IgNDQUUqJDZjMTE4MmEzLWRjZTUtNDNjMy1hZmQyLTc0MmFmNDA1NzlhZA"
+        project_id = "f2f44c44-ed7f-4c08-b255-86ee663ceac1"
+        
+        save_path = filedialog.asksaveasfilename(
+             defaultextension=".png", 
+             filetypes=[("PNG", "*.png")],
+             initialfile="test_2k_hardcoded.png",
+             title="Lưu ảnh Test 2K"
+        )
+        if not save_path: return
+
+        def task():
+            try:
+                # Find any live account
+                live = [a for a in self.app.account_manager.accounts if "Live" in a.get('status', '')]
+                if not live:
+                     raise Exception("Cần ít nhất 1 tài khoản Live!")
+                
+                acc = live[0]
+                api = LabsApiService()
+                api.set_credentials(acc['cookies']) # Use cookies (plural)
+                
+                self.app.root.after(0, lambda: messagebox.showinfo("Info", f"Testing Upscale...\nAcc: {acc['name']}"))
+                
+                # Call upscale 
+                upscale_url = api.upscale_image(media_id, project_id=project_id)
+                if not upscale_url:
+                     raise Exception("Không lấy được URL upscale")
+                     
+                api.download_video(upscale_url, save_path)
+                self.app.root.after(0, lambda: messagebox.showinfo("Success", f"✅ DONE 2K:\n{save_path}"))
+                
+            except Exception as e:
+                print(f"Test Error: {e}")
+                self.app.root.after(0, lambda err=str(e): messagebox.showerror("Error", f"Test Upscale Failed: {err}"))
+                
+        threading.Thread(target=task, daemon=True).start()
 
     def prev_page(self):
         if self.queue_page > 1:
@@ -422,7 +674,7 @@ class VideoScreen:
         info = ctk.CTkFrame(inner, fg_color="transparent")
         info.pack(side="left", fill="both", expand=True, padx=10)
         
-        job_type = "Img→Vid" if job['image'] else "Text→Vid"
+        job_type = "Img→Img→Vid" if (job.get('image') and job.get('image_2')) else ("Img→Vid" if job.get('image') else "Text→Vid")
         ctk.CTkLabel(
             info, 
             text=f"#{idx+1} {job_type}", 
@@ -506,7 +758,17 @@ class VideoScreen:
         
         self.lbl_status.configure(text=f"🚀 Đang chạy... ({len(live_accounts)} accounts)")
         self.btn_start.configure(state="disabled", fg_color="#4a4a6a")
+        
+        # Start UI Updater
+        self._start_ui_updater()
+        
         threading.Thread(target=self.batch_worker, daemon=True).start()
+
+    def _start_ui_updater(self):
+        if not self.app.is_running: return
+        self.refresh_queue_preview()
+        self.refresh_progress_panel()
+        self.app.root.after(1000, self._start_ui_updater)
 
     def stop_batch(self):
         self.app.is_running = False
@@ -543,8 +805,7 @@ class VideoScreen:
                     if job:
                         job['status'] = 'processing'
                         job['account'] = acc['name']
-                        self.app.root.after(0, self.refresh_queue_preview)
-                        self.app.root.after(0, self.refresh_progress_panel)
+                        # UI refresh handled by periodic updater
                         threading.Thread(target=self.process_job, args=(job, acc), daemon=True).start()
                         time.sleep(0.5)
             time.sleep(1)
@@ -557,10 +818,19 @@ class VideoScreen:
             if not self.app.is_running: return
             
             media_id = None
-            if job['image']:
+            media_id_2 = None
+            
+            # Upload start image
+            if job.get('image'):
                 res = api.upload_image(job['image'])
                 media_id = res.get('mediaId')
-                if not media_id: raise Exception("Upload failed")
+                if not media_id: raise Exception("Upload start image failed")
+            
+            # Upload end image (image_2)
+            if job.get('image_2'):
+                res2 = api.upload_image(job['image_2'])
+                media_id_2 = res2.get('mediaId')
+                if not media_id_2: raise Exception("Upload end image failed")
             
             token = self.app.browser_service.fetch_recaptcha_token(account['cookies'], account_id=account['name'], use_visible_browser=True)
             if not self.app.is_running: return
@@ -572,9 +842,15 @@ class VideoScreen:
             try: count = int(self.spin_count.get())
             except: count = 1
             
-            if media_id:
+            # Choose API based on image availability
+            if media_id and media_id_2:
+                # Start + End Image => batchAsyncGenerateVideoStartAndEndImage
+                gen = api.generate_video_start_end_image(job['prompt'], media_id, media_id_2, ratio, count, project_id, token)
+            elif media_id:
+                # Only Start Image => batchAsyncGenerateVideoStartImage
                 gen = api.generate_video(job['prompt'], media_id, ratio, count, project_id, token)
             else:
+                # No Image => Text-to-Video
                 gen = api.generate_video_text(job['prompt'], ratio, count, project_id, token)
             
             ops = gen.get('operations', [])
@@ -584,13 +860,13 @@ class VideoScreen:
             job['status'] = 'polling'
             job['progress'] = 10
             
-            self.app.root.after(0, self.refresh_progress_panel)
+            # UI refresh handled by periodic updater
             
             def simulate():
                 for i in range(10, 95):
                     if job['status'] != 'polling' or not self.app.is_running: break
                     job['progress'] = i
-                    self.app.root.after(0, self.refresh_progress_panel)
+                    # UI refresh handled by periodic updater
                     time.sleep(0.8)
             threading.Thread(target=simulate, daemon=True).start()
             
@@ -621,43 +897,96 @@ class VideoScreen:
             job['status'] = 'failed'
             job['error'] = str(e)
         finally:
-            self.app.root.after(0, self.refresh_queue_preview)
-            self.app.root.after(0, self.refresh_progress_panel)
+            pass # UI refresh handled by periodic updater
 
     def refresh_progress_panel(self):
-        for w in self.gallery_scroll.winfo_children(): w.destroy()
+        # Configure grid columns for the scrollable frame
+        self.gallery_scroll.grid_columnconfigure(0, weight=1)
+        self.gallery_scroll.grid_columnconfigure(1, weight=1)
+        self.gallery_scroll.grid_columnconfigure(2, weight=1)
         
-        active = [j for j in self.app.job_queue if j['status'] in ('processing', 'polling', 'success', 'failed')]
+        active_jobs = [j for j in self.app.job_queue if j['status'] in ('processing', 'polling', 'success', 'failed')]
+        active_indices = {j['index'] for j in active_jobs}
         
-        # Create grid
-        cols = 3
-        row_frame = None
-        
-        for idx, job in enumerate(active):
-            if idx % cols == 0:
-                row_frame = ctk.CTkFrame(self.gallery_scroll, fg_color="transparent")
-                row_frame.pack(fill="x", pady=5)
+        # 1. Remove cards that are no longer active
+        to_remove = [idx for idx in self.job_cards if idx not in active_indices]
+        for idx in to_remove:
+            if self.job_cards[idx]['frame'].winfo_exists():
+                self.job_cards[idx]['frame'].destroy()
+            del self.job_cards[idx]
             
-            self.create_progress_card(job, row_frame)
+        # 2. Create or Update cards
+        cols = 3
+        for i, job in enumerate(active_jobs):
+            idx = job['index']
+            row = i // cols
+            col = i % cols
+            
+            if idx not in self.job_cards:
+                self.create_progress_card(job)
+            
+            # Update position (grid)
+            card_data = self.job_cards[idx]
+            if card_data['frame'].winfo_exists():
+                card_data['frame'].grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+                self.update_progress_card(idx, job)
 
-    def create_progress_card(self, job, parent):
-        card = ctk.CTkFrame(parent, width=200, height=180, fg_color="#16213e", corner_radius=14)
-        card.pack(side="left", padx=6, pady=4)
+    def create_progress_card(self, job):
+        card = ctk.CTkFrame(self.gallery_scroll, width=200, height=180, fg_color="#16213e", corner_radius=14)
         card.pack_propagate(False)
         
         # Header
         header = ctk.CTkFrame(card, fg_color="transparent", height=35)
         header.pack(fill="x", padx=12, pady=(10, 5))
-        header.pack_propagate(False)
         
-        ctk.CTkLabel(
+        lbl_idx = ctk.CTkLabel(
             header, 
             text=f"#{job['index']+1}", 
             font=("SF Pro Display", 11, "bold"),
             text_color="#6c7293"
-        ).pack(side="left")
+        )
+        lbl_idx.pack(side="left")
+        
+        lbl_icon = ctk.CTkLabel(
+            header, 
+            text="", 
+            font=("SF Pro Display", 14, "bold")
+        )
+        lbl_icon.pack(side="right")
+        
+        # Content Container
+        content = ctk.CTkFrame(card, fg_color="#2a2a4e", corner_radius=10)
+        content.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        self.job_cards[job['index']] = {
+            'frame': card,
+            'refs': {
+                'lbl_idx': lbl_idx,
+                'lbl_icon': lbl_icon,
+                'content': content,
+                'widgets': {} # Dynamic widgets inside content
+            },
+            'last_status': None
+        }
+
+    def update_progress_card(self, idx, job):
+        if idx not in self.job_cards: return
+        card_data = self.job_cards[idx]
+        refs = card_data['refs']
         
         st = job['status']
+        prog = job.get('progress', 0)
+        thumb_obj = job.get('thumb_video_ctk')
+        
+        # Optimization: Check if state changed to avoid expensive configures
+        state_tuple = (st, int(prog), id(thumb_obj) if thumb_obj else None, job['index'])
+        if card_data.get('last_state_tuple') == state_tuple:
+            return
+        card_data['last_state_tuple'] = state_tuple
+        
+        # Update Header
+        refs['lbl_idx'].configure(text=f"#{job['index']+1}")
+        
         status_config = {
             'processing': ('⚙️', '#3b82f6'),
             'polling': ('👁️', '#8b5cf6'),
@@ -665,120 +994,157 @@ class VideoScreen:
             'failed': ('⛔', '#ef4444')
         }
         icon, color = status_config.get(st, ('⏳', '#6c7293'))
+        refs['lbl_icon'].configure(text=icon, text_color=color)
         
-        ctk.CTkLabel(
-            header, 
-            text=icon, 
-            font=("SF Pro Display", 14, "bold"),
-            text_color=color
-        ).pack(side="right")
+        # Check if we need to rebuild content (status changed)
+        # We group processing/polling together as they share the same UI structure (progress bar)
+        current_phase = 'progress' if st in ('processing', 'polling') else st
+        last_phase = card_data['last_status']
         
-        # Content
-        content = ctk.CTkFrame(card, fg_color="#2a2a4e", corner_radius=10)
-        content.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        content_frame = refs['content']
+        widgets = refs['widgets']
         
-        def retry():
-            # Find a live account to retry with
-            live_accounts = [a for a in self.app.account_manager.accounts if "Live" in a.get('status', '')]
-            if not live_accounts:
-                from tkinter import messagebox
-                messagebox.showerror("Error", "Không có tài khoản Live!")
-                return
+        if current_phase != last_phase:
+            # Clear previous content
+            for w in content_frame.winfo_children(): w.destroy()
+            widgets.clear()
+            card_data['last_status'] = current_phase
             
-            acc = live_accounts[0]
-            job['status'] = 'processing'
-            job['error'] = None
-            job['account'] = acc['name']
-            job['progress'] = 0
-            self.refresh_queue_preview()
-            self.refresh_progress_panel()
-            
-            # Run immediately in background
-            import threading
-            threading.Thread(target=self.process_job, args=(job, acc), daemon=True).start()
-        
-        if st in ('processing', 'polling'):
-            prog = job.get('progress', 0)
-            ctk.CTkLabel(
-                content, 
-                text=f"{int(prog)}%", 
-                font=("SF Pro Display", 24, "bold"),
-                text_color="#6366f1"
-            ).pack(expand=True)
-            
-            progress_bar = ctk.CTkProgressBar(content, width=160, height=6, corner_radius=3, fg_color="#1a1a2e", progress_color="#6366f1")
-            progress_bar.set(prog/100)
-            progress_bar.pack(pady=(0, 15))
-            
-        elif st == 'success' and job.get('video_url'):
-            # Thumbnail container
-            thumb_frame = ctk.CTkFrame(content, fg_color="transparent", width=160, height=90)
-            thumb_frame.pack(expand=True, pady=5)
-            thumb_frame.pack_propagate(False)
-
-            if 'thumb_video_ctk' not in job:
-                ctk.CTkLabel(thumb_frame, text="Loading thumb...", font=("SF Pro Display", 11), text_color="#6c7293").place(relx=0.5, rely=0.5, anchor="center")
-                
-                def load_thumb():
-                    try:
-                        import cv2
-                        cap = cv2.VideoCapture(job['video_url'])
-                        ret, frame = cap.read()
-                        cap.release()
-                        if ret:
-                            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                            pil_img = Image.fromarray(frame)
-                            pil_img.thumbnail((160, 90))
-                            ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=pil_img.size)
-                            job['thumb_video_ctk'] = ctk_img
-                            self.app.root.after(0, self.refresh_progress_panel)
-                    except Exception as e:
-                        print(f"Thumb error: {e}")
-
-                threading.Thread(target=load_thumb, daemon=True).start()
-            else:
-                # Show thumbnail and Play overlay
-                thumb_lbl = ctk.CTkLabel(thumb_frame, image=job['thumb_video_ctk'], text="")
-                thumb_lbl.place(relx=0.5, rely=0.5, anchor="center")
-                
-                # Overlay Play Button
-                # Overlay Play Button
-                # Overlay Play Label (Cleaner than Button)
-                play_lbl = ctk.CTkLabel(
-                    thumb_frame,
-                    text="▶",
-                    width=40,
-                    height=40,
-                    fg_color="transparent",
-                    text_color="#ffffff",
-                    font=("SF Pro Display", 24),
-                    cursor="hand2"
+            # Rebuild based on new phase
+            # Rebuild based on new phase
+            if current_phase == 'progress':
+                lbl_pct = ctk.CTkLabel(
+                    content_frame, 
+                    text="0%", 
+                    font=("SF Pro Display", 32, "bold"),
+                    text_color="#6366f1"
                 )
-                play_lbl.place(relx=0.5, rely=0.5, anchor="center")
+                lbl_pct.pack(expand=True)
                 
-                # Bind click events to both label and surrounding frame for better UX
-                play_lbl.bind("<Button-1>", lambda e: self.play_video(job))
-                thumb_lbl.bind("<Button-1>", lambda e: self.play_video(job))
-            
-        elif st == 'failed':
-            ctk.CTkLabel(
-                content, 
-                text="Failed", 
-                font=("SF Pro Display", 12),
-                text_color="#ef4444"
-            ).pack(expand=True, pady=(15, 5))
-            
-            ctk.CTkButton(
-                content,
-                text="🔄 Retry",
-                font=("SF Pro Display", 11),
-                width=70,
-                height=28,
-                corner_radius=6,
-                fg_color="#374151",
-                hover_color="#4b5563",
-                command=retry
-            ).pack(pady=(0, 15))
+                # Removed Prog Bar as requested
+                # prog_bar = ctk.CTkProgressBar(...)
+                
+                widgets['lbl_pct'] = lbl_pct
+                # widgets['prog_bar'] = prog_bar
+                
+            elif st == 'success':
+                if job.get('video_url'):
+                    thumb_frame = ctk.CTkFrame(content_frame, fg_color="transparent", width=160, height=90)
+                    thumb_frame.pack(expand=True, pady=5)
+                    thumb_frame.pack_propagate(False)
+                    
+                    thumb_lbl = ctk.CTkLabel(thumb_frame, text="", image=None)
+                    thumb_lbl.place(relx=0.5, rely=0.5, anchor="center")
+                    
+                    play_lbl = ctk.CTkLabel(
+                        thumb_frame,
+                        text="▶",
+                        width=40,
+                        height=40,
+                        fg_color="transparent",
+                        text_color="#ffffff",
+                        font=("SF Pro Display", 24),
+                        cursor="hand2"
+                    )
+                    play_lbl.place(relx=0.5, rely=0.5, anchor="center")
+                    
+                    # Bindings
+                    play_lbl.bind("<Button-1>", lambda e, j=job: self.play_video(j))
+                    thumb_lbl.bind("<Button-1>", lambda e, j=job: self.play_video(j))
+                    
+                    widgets['thumb_lbl'] = thumb_lbl
+                    
+                    # Trigger thumbnail load if needed
+                    # We do this check below
+                
+            elif st == 'failed':
+                ctk.CTkLabel(
+                    content_frame, 
+                    text="Failed", 
+                    font=("SF Pro Display", 12),
+                    text_color="#ef4444"
+                ).pack(expand=True, pady=(15, 5))
+                
+                ctk.CTkButton(
+                    content_frame,
+                    text="🔄 Retry",
+                    font=("SF Pro Display", 11),
+                    width=70,
+                    height=28,
+                    corner_radius=6,
+                    fg_color="#374151",
+                    hover_color="#4b5563",
+                    command=lambda j=job: self.retry_job(j)
+                ).pack(pady=(0, 15))
+
+        # Update Values
+        if current_phase == 'progress':
+            prog = job.get('progress', 0)
+            if 'lbl_pct' in widgets:
+                widgets['lbl_pct'].configure(text=f"{int(prog)}%")
+            # if 'prog_bar' in widgets: widgets['prog_bar'].set(prog/100)
+                
+        elif st == 'success':
+            # Handle Thumbnail
+            if 'thumb_video_ctk' in job:
+                if 'thumb_lbl' in widgets:
+                    try:
+                        widgets['thumb_lbl'].configure(text="", image=job['thumb_video_ctk'])
+                    except: pass
+            else:
+                if 'thumb_lbl' in widgets:
+                    widgets['thumb_lbl'].configure(text="Loading...")
+                
+                # Initiate load if not already loading
+                if not job.get('_thumb_loading'):
+                    job['_thumb_loading'] = True
+                    threading.Thread(target=self.load_thumbnail_thread, args=(job,), daemon=True).start()
+
+    def load_thumbnail_thread(self, job):
+        try:
+            import cv2
+            cap = cv2.VideoCapture(job['video_url'])
+            ret, frame = cap.read()
+            cap.release()
+            if ret:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(frame)
+                pil_img.thumbnail((160, 90))
+                ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=pil_img.size)
+                
+                job['thumb_video_ctk'] = ctk_img
+                
+                # Update UI safely
+                def update_thumb_ui():
+                    idx = job['index']
+                    if idx in self.job_cards:
+                        widgets = self.job_cards[idx]['refs'].get('widgets', {})
+                        if 'thumb_lbl' in widgets:
+                            widgets['thumb_lbl'].configure(text="", image=ctk_img)
+                            
+                self.app.root.after(0, update_thumb_ui)
+        except Exception as e:
+            print(f"Thumb error: {e}")
+        finally:
+            job['_thumb_loading'] = False
+
+    def retry_job(self, job):
+        # Find a live account to retry with
+        live_accounts = [a for a in self.app.account_manager.accounts if "Live" in a.get('status', '')]
+        if not live_accounts:
+            messagebox.showerror("Error", "Không có tài khoản Live!")
+            return
+        
+        acc = live_accounts[0]
+        job['status'] = 'processing'
+        job['error'] = None
+        job['account'] = acc['name']
+        job['progress'] = 0
+        self.refresh_queue_preview()
+        self.refresh_progress_panel() # Will switch card to progress mode
+        
+        # Run immediately in background
+        threading.Thread(target=self.process_job, args=(job, acc), daemon=True).start()
 
     def play_video(self, job):
         if not job.get('video_url'):
@@ -895,7 +1261,21 @@ class VideoScreen:
         if not done:
             messagebox.showinfo("Info", "Chưa có video nào hoàn thành!")
             return
-            
+
+        folder = filedialog.askdirectory()
+        if not folder: return
+        
+        api = LabsApiService()
+        for job in done:
+            name = f"short_{job['image_name']}.mp4" if job.get('image_name') else f"video_{job['index']}.mp4"
+            path = os.path.join(folder, name)
+            # Ensure unique name if overwriting?
+            # For now keeping original logic
+            url = job['video_url']
+            threading.Thread(target=lambda u=url, p=path: api.download_video(u, p), daemon=True).start()
+        
+        messagebox.showinfo("Info", f"⬇️ Đang tải {len(done)} video...")
+
     def add_mock_data(self):
         mocks = [
             {
@@ -921,35 +1301,3 @@ class VideoScreen:
             
         self.refresh_queue_preview()
         self.refresh_progress_panel()
-        messagebox.showinfo("Mock Mode", "Đã thêm 2 video test!")
-        
-    def clear_queue(self):
-        # Keep only processing, polling or success jobs that user wants to keep?
-        # Typically "Clear Queue" clears pending and failed.
-        # But user might want to clear EVERYTHING except processing.
-        
-        running = [j for j in self.app.job_queue if j['status'] in ('processing', 'polling')]
-        if running:
-            # If jobs are running, only clear others
-            new_q = running
-            self.app.job_queue = new_q
-            self.refresh_queue_preview()
-            self.refresh_progress_panel()
-        else:
-            self.app.job_queue = []
-            self.refresh_queue_preview()
-            self.refresh_progress_panel()
-            
-        # Re-index
-        for i, j in enumerate(self.app.job_queue): j['index'] = i
-        folder = filedialog.askdirectory()
-        if not folder: return
-        
-        api = LabsApiService()
-        for job in done:
-            name = f"short_{job['image_name']}.mp4" if job.get('image_name') else f"video_{job['index']}.mp4"
-            path = os.path.join(folder, name)
-            url = job['video_url']
-            threading.Thread(target=lambda u=url, p=path: api.download_video(u, p), daemon=True).start()
-        
-        messagebox.showinfo("Info", f"⬇️ Đang tải {len(done)} video...")

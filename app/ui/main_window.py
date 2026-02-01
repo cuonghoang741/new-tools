@@ -21,7 +21,7 @@ ctk.set_default_color_theme("blue")
 class MainWindow:
     def __init__(self, root):
         self.root = root
-        self.root.title("Google Labs Automation - Batch Mode")
+        self.root.title("Trust Labs")
         self.root.geometry("1400x800")
         
         # Services
@@ -101,7 +101,7 @@ class MainWindow:
         logo_frame.pack(fill="x", pady=(30, 40), padx=20)
         
         ctk.CTkLabel(logo_frame, text="🤖", font=("Segoe UI Emoji", 36)).pack()
-        ctk.CTkLabel(logo_frame, text="Labs Tool Pro", font=("SF Pro Display", 22, "bold"), text_color="#ffffff").pack()
+        ctk.CTkLabel(logo_frame, text="Trust Labs", font=("SF Pro Display", 22, "bold"), text_color="#ffffff").pack()
         ctk.CTkLabel(logo_frame, text="Batch Automation", font=("SF Pro Display", 11), text_color="#6c7293").pack()
         
         # Navigation Buttons
@@ -159,6 +159,9 @@ class MainWindow:
         self.screens["profile"] = ProfileScreen(self.frames["profile"], self)
         
         self.show_view("account")
+        
+        # Auto-check for updates (silent mode - don't show if no update)
+        self.root.after(2000, self.check_for_updates_silent)
 
     def show_view(self, name):
         # Update nav button states
@@ -194,3 +197,13 @@ class MainWindow:
         - Chuẩn bị file Excel (.xlsx) với cột 'prompt' (và 'image' nếu cần).
         """
         messagebox.showinfo("Hướng dẫn", msg)
+
+    def check_for_updates_silent(self):
+        """Check for updates silently on startup"""
+        from app.ui.components.update_dialog import check_for_updates_async
+        check_for_updates_async(self.root, silent=True)
+    
+    def check_for_updates_manual(self):
+        """Check for updates manually (show message even if no update)"""
+        from app.ui.components.update_dialog import check_for_updates_async
+        check_for_updates_async(self.root, silent=False)

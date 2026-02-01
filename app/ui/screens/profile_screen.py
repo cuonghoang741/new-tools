@@ -188,6 +188,17 @@ class ProfileScreen:
         logout_section = ctk.CTkFrame(card_inner, fg_color="transparent")
         logout_section.pack(fill="x", pady=(25, 0))
         
+        # Version info
+        from app.services.updater_service import UpdaterService
+        version = UpdaterService.CURRENT_VERSION
+        
+        ctk.CTkLabel(
+            logout_section,
+            text=f"v{version}",
+            font=("SF Pro Display", 11),
+            text_color="#6c7293"
+        ).pack(side="left")
+        
         ctk.CTkButton(
             logout_section,
             text="Đăng xuất",
@@ -198,6 +209,18 @@ class ProfileScreen:
             hover_color="#dc2626",
             command=self.do_logout
         ).pack(side="right")
+        
+        ctk.CTkButton(
+            logout_section,
+            text="🔄 Kiểm tra cập nhật",
+            font=("SF Pro Display", 12),
+            height=45,
+            width=160,
+            corner_radius=10,
+            fg_color="#374151",
+            hover_color="#4b5563",
+            command=self.app.check_for_updates_manual
+        ).pack(side="right", padx=10)
 
     def format_date(self, date_str):
         if not date_str or date_str == 'N/A': return "N/A"

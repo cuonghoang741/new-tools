@@ -59,9 +59,20 @@ class AccountManager:
             del self.accounts[index]
             self.save_accounts()
 
-    def get_account(self, index):
-        if 0 <= index < len(self.accounts):
-            return self.accounts[index]
+    def get_account(self, identifier):
+        """
+        Get account by index (int) or by name (string).
+        """
+        # If identifier is a string, search by name
+        if isinstance(identifier, str):
+            for acc in self.accounts:
+                if acc.get('name') == identifier:
+                    return acc
+            return None
+        
+        # If identifier is an index (int)
+        if isinstance(identifier, int) and 0 <= identifier < len(self.accounts):
+            return self.accounts[identifier]
         return None
 
     def check_all_live(self):
