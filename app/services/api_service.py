@@ -1090,3 +1090,201 @@ class LabsApiService:
         except Exception as e:
             print(f"[API] Error saving image: {e}")
             return False
+
+    def upscale_video(self, media_id, session_id=None, project_id=None, recaptcha_token=None, aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE", resolution="1080p"):
+        """
+        Upscales a video to 1080p or 4K resolution.
+        
+        Flow:
+        1. Log batch events (DOWNLOAD_UPSCALED, VIDEOFX_CREATE_VIDEO, etc.)
+        2. Call batchAsyncGenerateVideoUpsampleVideo API with recaptcha token
+        3. Return operation info for polling
+        
+        Args:
+            media_id: The mediaGenerationId of the video
+            session_id: Session ID (auto-generated if not provided)
+            project_id: Project ID 
+            recaptcha_token: Recaptcha token (required for API call)
+            aspect_ratio: VIDEO_ASPECT_RATIO_LANDSCAPE or VIDEO_ASPECT_RATIO_PORTRAIT
+            resolution: "1080p" or "4K"
+            
+        Returns:
+            dict with operation info or None on failure
+        """
+        import time
+        import uuid
+        import random
+        
+        # Resolution mapping
+        resolution_map = {
+            "1080p": ("VIDEO_RESOLUTION_1080P", "veo_3_1_upsampler_1080p"),
+            "4K": ("VIDEO_RESOLUTION_4K", "veo_3_1_upsampler_4k")
+        }
+        video_resolution, model_key = resolution_map.get(resolution, resolution_map["1080p"])
+        
+        # Ensure we have an access token (Bearer)
+        if not self.auth_token:
+            print("[API] Access Token missing, fetching new one...")
+            self.fetch_access_token()
+            
+        if not session_id:
+            session_id = f";{int(time.time()*1000)}"
+             
+        if not project_id:
+            project_id = "fc5539a3-963d-4bef-ad1a-090fe79b5c54"  # Default
+            
+        scene_id = str(uuid.uuid4())
+        seed = random.randint(10000, 99999)
+
+        # 1. Log DOWNLOAD_UPSCALED event
+        props_download = [
+            {"key": "TOOL_NAME", "stringValue": "PINHOLE"},
+            {"key": "USER_AGENT", "stringValue": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
+            {"key": "IS_DESKTOP"}
+        ]
+        meta_download = {"mediaGenerationId": media_id, "sessionId": session_id}
+        self.submit_batch_log(session_id, "DOWNLOAD_UPSCALED", metadata=meta_download, properties=props_download)
+        
+        # 2. Log PINHOLE_UPSCALE_VIDEO event
+        props_upscale = [
+            {"key": "TOOL_NAME", "stringValue": "PINHOLE"},
+            {"key": "PINHOLE_VIEW", "stringValue": "ASSETS"},
+            {"key": "PINHOLE_VIDEO_ASPECT_RATIO", "stringValue": aspect_ratio},
+            {"key": "G1_PAYGATE_TIER", "stringValue": "PAYGATE_TIER_TWO"},
+            {"key": "PINHOLE_PROMPT_BOX_MODE", "stringValue": "IMAGE_GENERATION"},
+            {"key": "USER_AGENT", "stringValue": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
+            {"key": "IS_DESKTOP"}
+        ]
+        meta_upscale = {"sessionId": session_id}
+        self.submit_batch_log(session_id, "PINHOLE_UPSCALE_VIDEO", metadata=meta_upscale, properties=props_upscale)
+
+        # 3. Call batchAsyncGenerateVideoUpsampleVideo API
+        url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoUpsampleVideo"
+        
+        payload = {
+            "requests": [{
+                "aspectRatio": aspect_ratio,
+                "resolution": video_resolution,
+                "seed": seed,
+                "videoInput": {
+                    "mediaId": media_id
+                },
+                "videoModelKey": model_key,
+                "metadata": {
+                    "sceneId": scene_id
+                }
+            }],
+            "clientContext": {
+                "recaptchaContext": {
+                    "token": recaptcha_token if recaptcha_token else "",
+                    "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+                },
+                "sessionId": session_id
+            }
+        }
+        
+        headers = self._get_headers()
+        headers['origin'] = 'https://labs.google'
+        headers['referer'] = 'https://labs.google/'
+        
+        # Ensure Bearer token format
+        if self.auth_token and not self.auth_token.startswith("Bearer "):
+            headers['authorization'] = f"Bearer {self.auth_token}"
+        
+        print(f"[API] Calling video upscale {resolution} API...")
+        print(f"[API] MediaID: {media_id[:50]}...")
+        print(f"[API] Scene ID: {scene_id}")
+        
+        try:
+            resp = self.session.post(url, json=payload, headers=headers, timeout=60)
+            print(f"[API] Video Upscale Response: {resp.status_code}")
+            
+            if resp.status_code != 200:
+                print(f"[API] Error response: {resp.text[:500]}")
+                return None
+             
+            resp.raise_for_status()
+            
+            data = resp.json()
+            print(f"[DEBUG] Video upscale response: {json.dumps(data)[:500]}")
+            
+            # Response should contain operation name for polling
+            return data
+            
+        except Exception as e:
+            print(f"[API] Video upscale error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def poll_video_upscale(self, operation_name, scene_id, timeout=300):
+        """
+        Poll for video upscale completion using batchCheckAsyncVideoGenerationStatus.
+        
+        Args:
+            operation_name: Operation name from upscale_video response (e.g. "xxx_upsampled" or "xxx_4k_upsampled")
+            scene_id: Scene ID from the upscale request
+            timeout: Max seconds to wait
+            
+        Returns:
+            dict with video URL or None on failure
+        """
+        import time
+        
+        start = time.time()
+        url = "https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus"
+        
+        headers = self._get_headers()
+        headers['origin'] = 'https://labs.google'
+        headers['referer'] = 'https://labs.google/'
+        headers['Content-Type'] = 'text/plain;charset=UTF-8'
+        
+        while time.time() - start < timeout:
+            try:
+                payload = {
+                    "operations": [{
+                        "operation": {"name": operation_name},
+                        "sceneId": scene_id,
+                        "status": "MEDIA_GENERATION_STATUS_ACTIVE"
+                    }]
+                }
+                
+                resp = self.session.post(url, json=payload, headers=headers, timeout=30)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    
+                    # Check if operation is complete
+                    operations = data.get('operations', [])
+                    if operations:
+                        op = operations[0]
+                        status = op.get('status')
+                        
+                        if status == 'MEDIA_GENERATION_STATUS_SUCCESSFUL':
+                            print(f"[API] Video upscale complete!")
+                            # Extract video URL from operation.metadata.video.fifeUrl
+                            operation = op.get('operation', {})
+                            metadata = operation.get('metadata', {})
+                            video = metadata.get('video', {})
+                            video_url = video.get('fifeUrl')
+                            
+                            return {
+                                'done': True,
+                                'video_url': video_url,
+                                'operation': op
+                            }
+                        elif status == 'MEDIA_GENERATION_STATUS_FAILED':
+                            print(f"[API] Video upscale FAILED!")
+                            return None
+                        else:
+                            # Still processing
+                            print(f"[API] Video upscale status: {status}")
+                    
+                time.sleep(5)  # Poll every 5 seconds
+                
+            except Exception as e:
+                print(f"[API] Poll error: {e}")
+                time.sleep(5)
+        
+        print(f"[API] Video upscale timeout after {timeout}s")
+        return None

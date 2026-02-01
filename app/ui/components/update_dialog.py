@@ -22,7 +22,7 @@ class UpdateDialog:
         # Create toplevel window
         self.dialog = ctk.CTkToplevel(self.parent)
         self.dialog.title("🔄 Cập nhật mới")
-        self.dialog.geometry("480x380")
+        self.dialog.geometry("520x520")
         self.dialog.resizable(False, False)
         
         # Center on parent

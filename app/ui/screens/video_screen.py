@@ -266,13 +266,39 @@ class VideoScreen:
             gallery_header,
             text="📥 Tải tất cả",
             font=("SF Pro Display", 11),
-            width=100,
+            width=90,
             height=32,
             corner_radius=8,
             fg_color="#3b82f6",
             hover_color="#2563eb",
             command=self.download_all_videos
-        ).pack(side="right")
+        ).pack(side="right", padx=(5, 0))
+        
+        self.btn_download_all_1080p = ctk.CTkButton(
+            gallery_header,
+            text="📥 All 1080p",
+            font=("SF Pro Display", 10, "bold"),
+            width=80,
+            height=32,
+            corner_radius=8,
+            fg_color="#f97316",
+            hover_color="#ea580c",
+            command=lambda: self.download_all_upscaled("1080p")
+        )
+        self.btn_download_all_1080p.pack(side="right", padx=(5, 0))
+        
+        self.btn_download_all_4k = ctk.CTkButton(
+            gallery_header,
+            text="📥 All 4K",
+            font=("SF Pro Display", 10, "bold"),
+            width=70,
+            height=32,
+            corner_radius=8,
+            fg_color="#ec4899",
+            hover_color="#db2777",
+            command=lambda: self.download_all_upscaled("4K")
+        )
+        self.btn_download_all_4k.pack(side="right", padx=(5, 0))
         
         # Gallery Grid
         self.gallery_scroll = ctk.CTkScrollableFrame(
@@ -882,6 +908,14 @@ class VideoScreen:
                         job['status'] = 'success'
                         job['progress'] = 100
                         
+                        # Extract mediaId for 1080p upscale
+                        # mediaGenerationId is at top level of op (not inside operation.metadata)
+                        try:
+                            job['mediaId'] = op.get('mediaGenerationId', '')
+                            print(f"[Video] MediaId: {job['mediaId'][:60]}..." if job['mediaId'] else "[Video] MediaId: NOT FOUND")
+                        except Exception as e:
+                            print(f"[Video] MediaId extraction error: {e}")
+                        
                         if self.var_auto_download.get() and self.auto_download_dir:
                             try:
                                 name = f"short_{job['image_name']}.mp4" if job.get('image_name') else f"video_{job['index']}.mp4"
@@ -954,6 +988,32 @@ class VideoScreen:
         )
         lbl_icon.pack(side="right")
         
+        # 1080p upscale button
+        btn_1080p = ctk.CTkButton(
+            header,
+            text="⬇️ 1080p",
+            width=60,
+            height=24,
+            corner_radius=6,
+            fg_color="#f97316",
+            hover_color="#ea580c",
+            font=("SF Pro Display", 10, "bold")
+        )
+        # Don't pack yet, will be shown only on success
+        
+        # 4K upscale button
+        btn_4k = ctk.CTkButton(
+            header,
+            text="⬇️ 4K",
+            width=50,
+            height=24,
+            corner_radius=6,
+            fg_color="#ec4899",
+            hover_color="#db2777",
+            font=("SF Pro Display", 10, "bold")
+        )
+        # Don't pack yet, will be shown only on success
+        
         # Content Container
         content = ctk.CTkFrame(card, fg_color="#2a2a4e", corner_radius=10)
         content.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -963,6 +1023,8 @@ class VideoScreen:
             'refs': {
                 'lbl_idx': lbl_idx,
                 'lbl_icon': lbl_icon,
+                'btn_1080p': btn_1080p,
+                'btn_4k': btn_4k,
                 'content': content,
                 'widgets': {} # Dynamic widgets inside content
             },
@@ -996,6 +1058,16 @@ class VideoScreen:
         icon, color = status_config.get(st, ('⏳', '#6c7293'))
         refs['lbl_icon'].configure(text=icon, text_color=color)
         
+        # Handle 1080p and 4K button visibility
+        if st == 'success' and (job.get('mediaId') or job.get('video_url')):
+            refs['btn_1080p'].configure(command=lambda j=job: self.download_video_upscale(j, "1080p"))
+            refs['btn_1080p'].pack(side="right", padx=(0, 3))
+            refs['btn_4k'].configure(command=lambda j=job: self.download_video_upscale(j, "4K"))
+            refs['btn_4k'].pack(side="right", padx=(0, 3))
+        else:
+            refs['btn_1080p'].pack_forget()
+            refs['btn_4k'].pack_forget()
+        
         # Check if we need to rebuild content (status changed)
         # We group processing/polling together as they share the same UI structure (progress bar)
         current_phase = 'progress' if st in ('processing', 'polling') else st
@@ -1003,6 +1075,7 @@ class VideoScreen:
         
         content_frame = refs['content']
         widgets = refs['widgets']
+
         
         if current_phase != last_phase:
             # Clear previous content
@@ -1153,7 +1226,7 @@ class VideoScreen:
         # Create video player popup
         player = ctk.CTkToplevel(self.app.root)
         player.title(f"Video Player - #{job['index']+1}")
-        player.geometry("720x480")
+        player.geometry("720x520")
         player.configure(fg_color="#0f0f23")
         player.transient(self.app.root)
         player.attributes("-topmost", True)  # Always on top
@@ -1256,6 +1329,148 @@ class VideoScreen:
         
         threading.Thread(target=play_thread, daemon=True).start()
 
+    def download_video_upscale(self, job, resolution="1080p"):
+        """Download video in specified resolution (1080p or 4K)"""
+        save_path = filedialog.asksaveasfilename(
+            defaultextension=".mp4", 
+            filetypes=[("MP4", "*.mp4")],
+            initialfile=f"video_{resolution.lower()}_{job['index']}.mp4",
+            title=f"Lưu Video {resolution}"
+        )
+        if not save_path: return
+
+        media_id = job.get('mediaId')
+        if not media_id:
+            messagebox.showerror("Error", "Không tìm thấy Media ID của video này!")
+            return
+
+        # Get button reference for loading state
+        job_idx = job['index']
+        btn_key = 'btn_1080p' if resolution == "1080p" else 'btn_4k'
+        original_color = "#f97316" if resolution == "1080p" else "#ec4899"
+        btn = None
+        if job_idx in self.job_cards:
+            btn = self.job_cards[job_idx]['refs'].get(btn_key)
+        
+        def set_loading(text, loading=True):
+            if btn:
+                self.app.root.after(0, lambda: btn.configure(
+                    text=text,
+                    state="disabled" if loading else "normal",
+                    fg_color="#4b5563" if loading else original_color
+                ))
+
+        def task():
+            try:
+                set_loading("⏳...", True)
+                
+                # Find a live account
+                acc_name = job.get('account')
+                acc = self.app.account_manager.get_account(acc_name)
+                
+                if not acc:
+                    live = [a for a in self.app.account_manager.accounts if "Live" in a.get('status', '')]
+                    if live:
+                        acc = live[0]
+                    else:
+                        raise Exception("Cần ít nhất 1 tài khoản Live!")
+                
+                project_id = acc.get('project_id')
+                
+                api = LabsApiService()
+                api.set_credentials(acc['cookies'], acc.get('access_token'))
+                
+                # Step 1: Get recaptcha token
+                print(f"[{resolution}] Fetching recaptcha token...")
+                set_loading("🔐 Token", True)
+                
+                recaptcha_token = self.app.browser_service.fetch_recaptcha_token_with_project(
+                    acc['cookies'], 
+                    project_id, 
+                    account_id=acc['name'],
+                    use_visible_browser=True, 
+                    action='VIDEO_GENERATION'
+                )
+                
+                if not recaptcha_token:
+                    raise Exception("Không lấy được Recaptcha Token!")
+                
+                print(f"[{resolution}] Got recaptcha token: {str(recaptcha_token)[:50]}...")
+                
+                # Step 2: Call upscale API
+                set_loading("📤 Start", True)
+                print(f"[{resolution}] Starting video upscale...")
+                
+                # Determine aspect ratio from job
+                aspect_ratio = "VIDEO_ASPECT_RATIO_LANDSCAPE"
+                if job.get('ratio') == "9:16":
+                    aspect_ratio = "VIDEO_ASPECT_RATIO_PORTRAIT"
+                
+                result = api.upscale_video(
+                    media_id, 
+                    project_id=project_id,
+                    recaptcha_token=recaptcha_token,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution
+                )
+                
+                if not result:
+                    raise Exception(f"Không thể bắt đầu upscale video {resolution}!")
+                
+                # Step 3: Poll for completion
+                video_url = None
+                
+                # Extract operation name and scene_id from response
+                # Response format: { "operations": [{ "operation": {"name": "xxx_upsampled"}, "sceneId": "yyy", "status": "PENDING" }] }
+                operations = result.get('operations', [])
+                if operations:
+                    op_data = operations[0]
+                    op_name = op_data.get('operation', {}).get('name')
+                    scene_id = op_data.get('sceneId', '')
+                    
+                    if op_name:
+                        print(f"[{resolution}] Polling operation: {op_name}, sceneId: {scene_id}")
+                        set_loading("⏳ Wait", True)
+                        
+                        poll_result = api.poll_video_upscale(op_name, scene_id, timeout=300)
+                        
+                        if poll_result and poll_result.get('done'):
+                            video_url = poll_result.get('video_url')
+                
+                # If no operations, might have direct response
+                if not video_url:
+                    generated = result.get('generatedVideos', [])
+                    if generated:
+                        video_url = generated[0].get('video', {}).get('uri')
+                
+                if not video_url:
+                    raise Exception(f"Không lấy được URL video {resolution}!")
+                
+                # Step 4: Download video
+                set_loading("⬇️ DL", True)
+                print(f"[{resolution}] Downloading: {video_url[:80]}...")
+                
+                import requests
+                resp = requests.get(video_url, stream=True, timeout=120)
+                resp.raise_for_status()
+                
+                with open(save_path, 'wb') as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                
+                print(f"[{resolution}] Saved: {save_path}")
+                self.app.root.after(0, lambda: messagebox.showinfo("Success", f"✅ Đã tải video {resolution}:\n{save_path}"))
+                
+            except Exception as e:
+                print(f"[{resolution} Error] {e}")
+                import traceback
+                traceback.print_exc()
+                self.app.root.after(0, lambda err=str(e): messagebox.showerror("Error", f"Lỗi {resolution}: {err}"))
+            finally:
+                set_loading(f"⬇️ {resolution}", False)
+        
+        threading.Thread(target=task, daemon=True).start()
+
     def download_all_videos(self):
         done = [j for j in self.app.job_queue if j['status'] == 'success' and j.get('video_url')]
         if not done:
@@ -1275,6 +1490,153 @@ class VideoScreen:
             threading.Thread(target=lambda u=url, p=path: api.download_video(u, p), daemon=True).start()
         
         messagebox.showinfo("Info", f"⬇️ Đang tải {len(done)} video...")
+
+    def download_all_upscaled(self, resolution="1080p"):
+        """Download all successful videos in specified resolution (1080p or 4K)"""
+        done = [j for j in self.app.job_queue if j['status'] == 'success' and j.get('mediaId')]
+        if not done:
+            messagebox.showinfo("Info", "Chưa có video nào hoàn thành!")
+            return
+            
+        folder = filedialog.askdirectory(title=f"Chọn thư mục lưu video {resolution}")
+        if not folder: return
+        
+        btn = self.btn_download_all_1080p if resolution == "1080p" else self.btn_download_all_4k
+        original_color = "#f97316" if resolution == "1080p" else "#ec4899"
+        original_text = f"📥 All {resolution}"
+        btn_key = 'btn_1080p' if resolution == "1080p" else 'btn_4k'
+        
+        def update_btn(text, loading=False):
+            self.app.root.after(0, lambda: btn.configure(
+                text=text,
+                state="disabled" if loading else "normal",
+                fg_color="#4b5563" if loading else original_color
+            ))
+        
+        def set_card_buttons_state(disabled=True):
+            """Disable/Enable all individual card buttons for this resolution"""
+            def _update():
+                for idx, card_data in self.job_cards.items():
+                    card_btn = card_data['refs'].get(btn_key)
+                    if card_btn:
+                        card_btn.configure(
+                            state="disabled" if disabled else "normal",
+                            fg_color="#4b5563" if disabled else original_color
+                        )
+            self.app.root.after(0, _update)
+        
+        def task():
+            try:
+                update_btn(f"⏳ 0/{len(done)}", True)
+                set_card_buttons_state(True)  # Disable individual buttons
+                
+                # Find a live account
+                live = [a for a in self.app.account_manager.accounts if "Live" in a.get('status', '')]
+                if not live:
+                    raise Exception("Cần ít nhất 1 tài khoản Live!")
+                
+                acc = live[0]
+                project_id = acc.get('project_id')
+                
+                api = LabsApiService()
+                api.set_credentials(acc['cookies'], acc.get('access_token'))
+                
+                success_count = 0
+                
+                for i, job in enumerate(done):
+                    try:
+                        update_btn(f"⏳ {i+1}/{len(done)}", True)
+                        
+                        media_id = job.get('mediaId')
+                        if not media_id:
+                            continue
+                        
+                        # Get recaptcha token
+                        print(f"[All {resolution}] Job {i+1}/{len(done)} - Getting recaptcha...")
+                        recaptcha_token = self.app.browser_service.fetch_recaptcha_token_with_project(
+                            acc['cookies'], 
+                            project_id, 
+                            account_id=acc['name'],
+                            use_visible_browser=True, 
+                            action='VIDEO_GENERATION'
+                        )
+                        
+                        if not recaptcha_token:
+                            print(f"[All {resolution}] Job {i+1} - No recaptcha token!")
+                            continue
+                        
+                        # Determine aspect ratio
+                        aspect_ratio = "VIDEO_ASPECT_RATIO_LANDSCAPE"
+                        if job.get('ratio') == "9:16":
+                            aspect_ratio = "VIDEO_ASPECT_RATIO_PORTRAIT"
+                        
+                        # Call upscale API
+                        print(f"[All {resolution}] Job {i+1}/{len(done)} - Upscaling...")
+                        result = api.upscale_video(
+                            media_id, 
+                            project_id=project_id,
+                            recaptcha_token=recaptcha_token,
+                            aspect_ratio=aspect_ratio,
+                            resolution=resolution
+                        )
+                        
+                        if not result:
+                            print(f"[All {resolution}] Job {i+1} - Upscale failed!")
+                            continue
+                        
+                        # Poll for completion
+                        video_url = None
+                        operations = result.get('operations', [])
+                        if operations:
+                            op_data = operations[0]
+                            op_name = op_data.get('operation', {}).get('name')
+                            scene_id = op_data.get('sceneId', '')
+                            
+                            if op_name:
+                                print(f"[All {resolution}] Job {i+1} - Polling: {op_name[:30]}...")
+                                poll_result = api.poll_video_upscale(op_name, scene_id, timeout=300)
+                                if poll_result and poll_result.get('done'):
+                                    video_url = poll_result.get('video_url')
+                        
+                        if not video_url:
+                            generated = result.get('generatedVideos', [])
+                            if generated:
+                                video_url = generated[0].get('video', {}).get('uri')
+                        
+                        if not video_url:
+                            print(f"[All {resolution}] Job {i+1} - No video URL!")
+                            continue
+                        
+                        # Download video
+                        import requests
+                        save_path = os.path.join(folder, f"video_{resolution.lower()}_{job['index']}.mp4")
+                        resp = requests.get(video_url, stream=True, timeout=120)
+                        resp.raise_for_status()
+                        
+                        with open(save_path, 'wb') as f:
+                            for chunk in resp.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        
+                        success_count += 1
+                        print(f"[All {resolution}] Job {i+1} - Saved: {save_path}")
+                        
+                    except Exception as e:
+                        print(f"[All {resolution}] Job {i+1} error: {e}")
+                        continue
+                
+                self.app.root.after(0, lambda: messagebox.showinfo(
+                    "Success", 
+                    f"✅ Đã tải {success_count}/{len(done)} video {resolution}!\n\nThư mục: {folder}"
+                ))
+                
+            except Exception as e:
+                print(f"[All {resolution} Error] {e}")
+                self.app.root.after(0, lambda err=str(e): messagebox.showerror("Error", f"Lỗi: {err}"))
+            finally:
+                update_btn(original_text, False)
+                set_card_buttons_state(False)  # Re-enable individual buttons
+        
+        threading.Thread(target=task, daemon=True).start()
 
     def add_mock_data(self):
         mocks = [

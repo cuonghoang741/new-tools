@@ -8,6 +8,7 @@ import os
 from app.services.account_manager import AccountManager
 from app.services.browser_service import BrowserService
 from app.services.auth_service import AuthService
+from app.services.updater_service import UpdaterService
 from app.ui.screens.account_screen import AccountScreen
 from app.ui.screens.video_screen import VideoScreen
 from app.ui.screens.image_screen import ImageScreen
@@ -135,7 +136,7 @@ class MainWindow:
         # Version info at bottom
         version_label = ctk.CTkLabel(
             self.sidebar, 
-            text="v2.0.0 • Dark Mode", 
+            text=f"v{UpdaterService.CURRENT_VERSION} • Dark Mode", 
             font=("SF Pro Display", 10), 
             text_color="#4a4a6a"
         )
