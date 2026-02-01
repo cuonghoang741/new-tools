@@ -333,6 +333,106 @@ class ImageScreen:
         
         messagebox.showinfo("Info", f"⬇️ Đang bắt đầu tải {count} ảnh...")
 
+    def download_all_upscaled(self, resolution="2K"):
+        """Download all successful images in 2K or 4K resolution"""
+        done = [j for j in self.app.image_job_queue if j['status'] == 'success' and j.get('mediaId')]
+        if not done:
+            messagebox.showinfo("Info", "Chưa có ảnh nào hoàn thành!")
+            return
+            
+        folder = filedialog.askdirectory(title=f"Chọn thư mục lưu ảnh {resolution}")
+        if not folder: return
+        
+        # Get button reference for loading state
+        btn = self.btn_download_all_2k if resolution == "2K" else self.btn_download_all_4k
+        original_color = "#8b5cf6" if resolution == "2K" else "#ec4899"
+        original_text = f"📥 All {resolution}"
+        
+        def update_btn(text, loading=False):
+            self.app.root.after(0, lambda: btn.configure(
+                text=text,
+                state="disabled" if loading else "normal",
+                fg_color="#4b5563" if loading else original_color
+            ))
+        
+        def task():
+            try:
+                update_btn(f"⏳ 0/{len(done)}", True)
+                
+                # Find a live account
+                live = [a for a in self.app.account_manager.accounts if "Live" in a.get('status', '')]
+                if not live:
+                    raise Exception("Cần ít nhất 1 tài khoản Live!")
+                
+                acc = live[0]
+                project_id = acc.get('project_id')
+                
+                api = LabsApiService()
+                api.set_credentials(acc['cookies'], acc.get('access_token'))
+                
+                success_count = 0
+                
+                for i, job in enumerate(done):
+                    try:
+                        update_btn(f"⏳ {i+1}/{len(done)}", True)
+                        
+                        media_id = job.get('mediaId')
+                        if not media_id:
+                            continue
+                        
+                        # Get recaptcha token
+                        print(f"[All {resolution}] Job {i+1}/{len(done)} - Getting recaptcha...")
+                        recaptcha_token = self.app.browser_service.fetch_recaptcha_token_with_project(
+                            acc['cookies'], 
+                            project_id, 
+                            account_id=acc['name'],
+                            use_visible_browser=True, 
+                            action='IMAGE_GENERATION'
+                        )
+                        
+                        if not recaptcha_token:
+                            print(f"[All {resolution}] Job {i+1} - No recaptcha token!")
+                            continue
+                        
+                        # Call upscale API
+                        print(f"[All {resolution}] Job {i+1}/{len(done)} - Upscaling...")
+                        upscale_result = api.upscale_image(
+                            media_id, 
+                            project_id=project_id,
+                            recaptcha_token=recaptcha_token,
+                            resolution=resolution
+                        )
+                        
+                        if not upscale_result or 'encodedImage' not in upscale_result:
+                            print(f"[All {resolution}] Job {i+1} - No encoded image!")
+                            continue
+                        
+                        # Save file
+                        save_path = os.path.join(folder, f"img_{resolution.lower()}_{job['index']}.jpg")
+                        success = api.save_upscaled_image(upscale_result['encodedImage'], save_path)
+                        
+                        if success:
+                            success_count += 1
+                            print(f"[All {resolution}] Job {i+1} - Saved: {save_path}")
+                        
+                    except Exception as e:
+                        print(f"[All {resolution}] Job {i+1} error: {e}")
+                        continue
+                
+                self.app.root.after(0, lambda: messagebox.showinfo(
+                    "Success", 
+                    f"✅ Đã tải {success_count}/{len(done)} ảnh {resolution}!\n\nThư mục: {folder}"
+                ))
+                
+            except Exception as e:
+                print(f"[All {resolution} Error] {e}")
+                self.app.root.after(0, lambda err=str(e): messagebox.showerror("Error", f"Lỗi: {err}"))
+            finally:
+                update_btn(original_text, False)
+        
+        threading.Thread(target=task, daemon=True).start()
+
+
     def _download_file(self, url, path):
         try:
             r = requests.get(url, timeout=30)

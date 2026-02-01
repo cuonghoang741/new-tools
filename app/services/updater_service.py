@@ -14,7 +14,7 @@ class UpdaterService:
     
     GITHUB_OWNER = "cuonghoang741"
     GITHUB_REPO = "new-tools"
-    CURRENT_VERSION = "2.0.0"
+    CURRENT_VERSION = "2.2.0"
     
     def __init__(self):
         self.latest_version = None
