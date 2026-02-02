@@ -858,29 +858,63 @@ class VideoScreen:
                 media_id_2 = res2.get('mediaId')
                 if not media_id_2: raise Exception("Upload end image failed")
             
-            token = self.app.browser_service.fetch_recaptcha_token(account['cookies'], account_id=account['name'], use_visible_browser=True)
-            if not self.app.is_running: return
-            if not token: raise Exception("Failed Recaptcha")
+            # Retry logic for reCAPTCHA errors - max 3 attempts
+            max_retries = 3
+            gen = None
+            last_error = None
             
-            project_id = account.get('project_id')
-            ratio_txt = self.combo_ratio.get()
-            ratio = "VIDEO_ASPECT_RATIO_PORTRAIT" if "Portrait" in ratio_txt else "VIDEO_ASPECT_RATIO_LANDSCAPE"
-            try: count = int(self.spin_count.get())
-            except: count = 1
+            for attempt in range(1, max_retries + 1):
+                try:
+                    token = self.app.browser_service.fetch_recaptcha_token(account['cookies'], account_id=account['name'], use_visible_browser=True)
+                    if not self.app.is_running: return
+                    if not token: raise Exception("Failed Recaptcha")
+                    
+                    project_id = account.get('project_id')
+                    ratio_txt = self.combo_ratio.get()
+                    ratio = "VIDEO_ASPECT_RATIO_PORTRAIT" if "Portrait" in ratio_txt else "VIDEO_ASPECT_RATIO_LANDSCAPE"
+                    try: count = int(self.spin_count.get())
+                    except: count = 1
+                    
+                    # Choose API based on image availability
+                    if media_id and media_id_2:
+                        # Start + End Image => batchAsyncGenerateVideoStartAndEndImage
+                        gen = api.generate_video_start_end_image(job['prompt'], media_id, media_id_2, ratio, count, project_id, token)
+                    elif media_id:
+                        # Only Start Image => batchAsyncGenerateVideoStartImage
+                        gen = api.generate_video(job['prompt'], media_id, ratio, count, project_id, token)
+                    else:
+                        # No Image => Text-to-Video
+                        gen = api.generate_video_text(job['prompt'], ratio, count, project_id, token)
+                    
+                    # Check if response contains error (403 reCAPTCHA)
+                    if gen and gen.get('error'):
+                        error_code = gen.get('error', {}).get('code')
+                        error_msg = gen.get('error', {}).get('message', '')
+                        if error_code == 403 and 'reCAPTCHA' in error_msg:
+                            print(f"[Job #{job['index']+1}] reCAPTCHA failed (attempt {attempt}/{max_retries}), retrying...")
+                            last_error = f"reCAPTCHA failed: {error_msg}"
+                            if attempt < max_retries:
+                                time.sleep(2)  # Wait before retry
+                                continue
+                            else:
+                                raise Exception(f"reCAPTCHA failed after {max_retries} attempts")
+                    
+                    # Success - break out of retry loop
+                    break
+                    
+                except Exception as e:
+                    last_error = str(e)
+                    if 'reCAPTCHA' in str(e) or '403' in str(e) or 'Recaptcha' in str(e):
+                        print(f"[Job #{job['index']+1}] Error (attempt {attempt}/{max_retries}): {e}")
+                        if attempt < max_retries:
+                            time.sleep(2)
+                            continue
+                        else:
+                            raise Exception(f"reCAPTCHA failed after {max_retries} attempts: {e}")
+                    raise
             
-            # Choose API based on image availability
-            if media_id and media_id_2:
-                # Start + End Image => batchAsyncGenerateVideoStartAndEndImage
-                gen = api.generate_video_start_end_image(job['prompt'], media_id, media_id_2, ratio, count, project_id, token)
-            elif media_id:
-                # Only Start Image => batchAsyncGenerateVideoStartImage
-                gen = api.generate_video(job['prompt'], media_id, ratio, count, project_id, token)
-            else:
-                # No Image => Text-to-Video
-                gen = api.generate_video_text(job['prompt'], ratio, count, project_id, token)
-            
-            ops = gen.get('operations', [])
-            if not ops: raise Exception("No operations")
+            ops = gen.get('operations', []) if gen else []
+            if not ops: raise Exception(last_error or "No operations")
             
             job['operation'] = ops[0]
             job['status'] = 'polling'
@@ -1202,22 +1236,66 @@ class VideoScreen:
             job['_thumb_loading'] = False
 
     def retry_job(self, job):
+        """Reset job and retry - either queue it or run immediately"""
         # Find a live account to retry with
         live_accounts = [a for a in self.app.account_manager.accounts if "Live" in a.get('status', '')]
         if not live_accounts:
             messagebox.showerror("Error", "Không có tài khoản Live!")
             return
         
-        acc = live_accounts[0]
-        job['status'] = 'processing'
-        job['error'] = None
-        job['account'] = acc['name']
-        job['progress'] = 0
-        self.refresh_queue_preview()
-        self.refresh_progress_panel() # Will switch card to progress mode
+        # 1. Remove the failed card from UI
+        job_idx = job['index']
+        if job_idx in self.job_cards:
+            if self.job_cards[job_idx]['frame'].winfo_exists():
+                self.job_cards[job_idx]['frame'].destroy()
+            del self.job_cards[job_idx]
         
-        # Run immediately in background
-        threading.Thread(target=self.process_job, args=(job, acc), daemon=True).start()
+        # 2. Reset job state completely
+        job['error'] = None
+        job['progress'] = 0
+        job['operation'] = None
+        job['video_url'] = None
+        job['mediaId'] = None
+        job.pop('thumb_video_ctk', None)
+        job.pop('_thumb_loading', None)
+        
+        # 3. Process based on batch state
+        if self.app.is_running:
+            # Batch is running - set to pending, batch_worker will pick it up
+            job['status'] = 'pending'
+            job['account'] = None
+            self.refresh_queue_preview()
+        else:
+            # Batch stopped - run this job immediately
+            acc = live_accounts[0]
+            job['status'] = 'processing'
+            job['account'] = acc['name']
+            
+            # Enable is_running for this job
+            self.app.is_running = True
+            self.lbl_status.configure(text="🔄 Đang retry...")
+            self.btn_start.configure(state="disabled", fg_color="#4a4a6a")
+            
+            # Start UI updater
+            self._start_ui_updater()
+            
+            # Run job in background, then cleanup
+            def run_and_cleanup():
+                try:
+                    self.process_job(job, acc)
+                finally:
+                    # Check if there are more pending jobs after this one
+                    pending = [j for j in self.app.job_queue if j['status'] == 'pending']
+                    processing = [j for j in self.app.job_queue if j['status'] in ('processing', 'polling')]
+                    
+                    if not pending and not processing:
+                        self.app.is_running = False
+                        self.app.root.after(0, lambda: [
+                            self.lbl_status.configure(text="✅ Hoàn tất!"),
+                            self.btn_start.configure(state="normal", fg_color="#22c55e")
+                        ])
+            
+            threading.Thread(target=run_and_cleanup, daemon=True).start()
 
     def play_video(self, job):
         if not job.get('video_url'):
